@@ -39,7 +39,7 @@ export default function RecipeDisclaimerPage() {
       <h2>Nutrition estimates and results</h2>
       <p>
         Nutrition values are estimates and will vary with the brands and amounts you use. Cooking times and results can
-        vary with equipment, altitude and ingredients. Recipes labeled <em>Not yet kitchen-tested</em> have not been cooked
+        vary with equipment, altitude and ingredients. Unless a recipe says otherwise, it has not been cooked
         and confirmed by us.
       </p>
       <h2>Food safety</h2>

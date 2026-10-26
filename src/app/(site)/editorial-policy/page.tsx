@@ -38,9 +38,9 @@ export default function EditorialPolicyPage() {
         Where a recipe lists the major food allergens it contains, that list is based on the ingredients as written. Brands
         differ, so always check the labels of the products you use.
       </p>
-      <h2>Testing labels</h2>
+      <h2>Testing</h2>
       <p>
-        If a recipe has not yet been cooked and confirmed in a kitchen, it carries a <em>Not yet kitchen-tested</em> label.
+        We do not claim a recipe has been cooked and confirmed in a kitchen unless that is true, and results may vary.
         We never describe personal testing experiences, taste tests or family reactions that did not happen.
       </p>
       <h2>Gluten-free standards</h2>

@@ -26,8 +26,7 @@ export default function AboutPage() {
       <h2>How our recipes are made</h2>
       <p>
         Some recipes on this site are developed with the help of software tools and then reviewed by a person before
-        publication. A recipe that has not yet been cooked and confirmed in a kitchen is clearly labeled{" "}
-        <em>Not yet kitchen-tested</em>. Nutrition information, when shown, is always an estimate. You can read more in our{" "}
+        publication. We never claim a recipe has been cooked and confirmed in a kitchen when it has not. Nutrition information, when shown, is always an estimate. You can read more in our{" "}
         <Link href="/editorial-policy">editorial policy</Link>.
       </p>
       <h2>An important note</h2>

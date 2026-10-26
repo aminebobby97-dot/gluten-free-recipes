@@ -89,7 +89,7 @@ export function getPublishReadiness(recipe: ReadinessInput): PublishReadiness {
     warn("nutrition", "Nutrition values are not marked as estimates and have no stated method.");
   }
   if (!recipe.pinterest_image) warn("pinterest_image", "No Pinterest image. The featured image will be used for the Save button.");
-  if (!recipe.is_tested) warn("is_tested", "The recipe will be labeled as not yet kitchen-tested.");
+  if (!recipe.is_tested) warn("is_tested", "Not marked as kitchen-tested. Tick it only if the recipe has really been cooked and confirmed.");
 
   const seoTitle = recipe.seo_title || recipe.title || "";
   if (seoTitle.length > 60) warn("seo_title", `SEO title is ${seoTitle.length} characters; aim for 60 or fewer.`);
