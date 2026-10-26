@@ -204,7 +204,7 @@ export function RecipeForm({ recipe, categories }: { recipe: Recipe | null; cate
           <input type="checkbox" name="is_tested" defaultChecked={recipe?.is_tested ?? false} className="mt-1 h-4 w-4 accent-[var(--color-sage)]" />
           <span>
             <span className="font-semibold text-ink">This recipe has been cooked and confirmed to work as written.</span>
-            <span className="block text-ink-soft">Leave unchecked otherwise. Untested recipes are labeled “Not yet kitchen-tested” on the site.</span>
+            <span className="block text-ink-soft">Leave unchecked otherwise. This is kept for your records and is not shown on the site.</span>
           </span>
         </label>
       </Section>

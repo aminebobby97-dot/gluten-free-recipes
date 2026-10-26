@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertIcon, ArrowDownIcon, ClockIcon, InfoIcon, LeafIcon, PinterestIcon, ServingsIcon } from "@/components/icons";
+import { AlertIcon, ArrowDownIcon, ClockIcon, LeafIcon, PinterestIcon, ServingsIcon } from "@/components/icons";
 import { Breadcrumbs } from "@/components/site/breadcrumbs";
 import { absoluteUrl } from "@/lib/env";
 import { ALLERGEN_LABELS, type Allergen } from "@/lib/automation/allergens";
@@ -70,7 +70,6 @@ export function RecipeArticle({ recipe, related }: RecipeArticleProps) {
             {pinImage && <PinterestButton url={pageUrl} media={absoluteUrl(pinImage)} description={recipe.title} />}
           </div>
 
-          {!recipe.is_tested && <UntestedNotice className="mt-6" />}
         </div>
       </header>
 
@@ -189,18 +188,6 @@ function Section({ title, id, children }: { title: string; id: string; children:
   );
 }
 
-function UntestedNotice({ className = "" }: { className?: string }) {
-  return (
-    <p className={`flex gap-3 rounded-2xl border border-honey/30 bg-honey-wash px-4 py-3 text-sm leading-relaxed text-ink ${className}`}>
-      <InfoIcon size={18} className="mt-0.5 shrink-0 text-honey" />
-      <span>
-        <strong className="font-semibold">Not yet kitchen-tested.</strong> This recipe follows standard gluten-free techniques
-        but has not been kitchen-tested yet, so results may vary.
-      </span>
-    </p>
-  );
-}
-
 function GlutenFreeNotes({ findings }: { findings: IngredientFinding[] }) {
   return (
     <section id="gluten-free-notes" className="print-hidden mt-14 scroll-mt-24 rounded-2xl border border-sage-light/50 bg-sage-wash/60 p-6 md:p-7" aria-labelledby="gf-notes-heading">
@@ -284,12 +271,6 @@ function RecipeCardSection({
           </div>
         </div>
       </div>
-
-      {!recipe.is_tested && (
-        <p className="border-b border-line bg-honey-wash/70 px-6 py-3 text-sm text-ink md:px-8">
-          <strong className="font-semibold">Not yet kitchen-tested.</strong> Results may vary.
-        </p>
-      )}
 
       <div className="grid gap-10 p-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)] md:p-8">
         <div>

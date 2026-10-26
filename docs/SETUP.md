@@ -57,7 +57,7 @@ Preview deployments automatically serve a `robots.txt` that disallows crawling.
 
 1. Sign in at `/admin/login`.
 2. Open a draft under **Recipes**, review every ingredient and step, upload a real photo (landscape, at least 1600px wide) and write its alt text.
-3. Tick "This recipe has been cooked and confirmed" only if that is true; otherwise the page shows a "Not yet kitchen-tested" label.
+3. Tick "This recipe has been cooked and confirmed" only if that is true; otherwise leave it unchecked (it is stored for your records and not shown on the site).
 4. Check the **Publishing** panel. Publishing is blocked until required fields are complete and the gluten checks pass.
 5. Click **Publish**. The page, category pages, homepage and sitemap update immediately.
 

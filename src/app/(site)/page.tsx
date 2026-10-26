@@ -173,7 +173,7 @@ function ApproachSection() {
     },
     {
       title: "Honest about testing",
-      body: "Recipes that have not been kitchen-tested yet are clearly labeled, and nutrition is always marked as an estimate.",
+      body: "We never claim a recipe was tested or tasted when it was not, and nutrition is always marked as an estimate.",
     },
   ];
   return (

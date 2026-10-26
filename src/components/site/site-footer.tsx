@@ -34,7 +34,7 @@ export function SiteFooter() {
           <p>
             © <CopyrightYear /> {siteConfig.name}. All rights reserved.
           </p>
-          <p>Not medical advice. Recipes are labeled when they have not yet been kitchen-tested.</p>
+          <p>Not medical advice. Results may vary.</p>
         </div>
       </div>
     </footer>
