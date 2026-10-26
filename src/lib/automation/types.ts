@@ -102,3 +102,16 @@ export interface ImageStore {
 export interface SiteRefresher {
   revalidate(slug: string): Promise<void>;
 }
+
+/** A failed AI request that was still billed, so its cost counts toward the daily budget. */
+export class AiCallError extends Error {
+  constructor(
+    message: string,
+    public readonly costUsd: number,
+    public readonly provider: string,
+    public readonly model: string,
+  ) {
+    super(message);
+    this.name = "AiCallError";
+  }
+}

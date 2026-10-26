@@ -23,7 +23,13 @@ interface TextModelPrice {
 export const TEXT_MODEL_PRICES: Record<string, TextModelPrice> = {
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  // Possible server-side fallback models when a request is declined.
+  "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  "claude-opus-4-8": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
 };
+
+/** Price used for a model missing from the table: the most expensive one, so spend is never under-counted. */
+export const FALLBACK_PRICE_MODEL = "claude-opus-4-8";
 
 export class UnknownPriceError extends Error {
   constructor(model: string) {
@@ -42,7 +48,8 @@ export function textCostUsd(model: string, usage: TokenUsage): number {
       (usage.cache_read_input_tokens ?? 0) * price.cacheRead +
       (usage.cache_creation_input_tokens ?? 0) * price.cacheWrite) /
     1_000_000;
-  return Math.ceil(dollars * 10_000) / 10_000;
+  // The small epsilon stops float noise (350.00000000000006) from rounding up a whole step.
+  return Math.ceil(dollars * 10_000 - 1e-9) / 10_000;
 }
 
 /** Worst-case cost of a text request before it is sent: full input plus max_tokens of output. */

@@ -14,7 +14,7 @@ import { dbError } from "@/lib/services/errors";
 import { claimJob, failJob, getOrCreateDailyJob, MAX_JOB_RETRIES, recordJobStep, toJobDate, JOB_LEASE_MINUTES, type PublishingJob } from "@/lib/services/jobs";
 import { BudgetExceededError } from "./cost";
 import { checkBudget, logEvent, markAttempt, recordAttempt, type AttemptKind } from "./log";
-import type { AiProviders, AiResult, AiStep, CategoryOption, GeneratedRecipe, ImageStore, Issue, KeywordRow, Photo, SiteRefresher } from "./types";
+import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type SiteRefresher } from "./types";
 import { blocking, parseGeneratedRecipe, validateGeneratedRecipe } from "./validate";
 
 export type RunMode = "dry_run" | "review" | "auto";
@@ -163,7 +163,8 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
       return { result, attemptId };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await recordAttempt(db, { jobId, keywordId, kind, attempt, status: "error", errorMessage: message, durationMs: Date.now() - t0 }, "unknown", "unknown");
+      const billed = err instanceof AiCallError ? { provider: err.provider, model: err.model, promptVersion: "unknown", costUsd: err.costUsd } : undefined;
+      await recordAttempt(db, { jobId, keywordId, kind, attempt, status: "error", errorMessage: message, result: billed, durationMs: Date.now() - t0 }, "unknown", "unknown");
       throw err;
     }
   };

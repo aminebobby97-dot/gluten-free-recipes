@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { automationDb, fakeImages, fakeProviders, fakeSite, goodRecipe } from "./support/automation-fixtures";
 import { validateGeneratedRecipe } from "@/lib/automation/validate";
+import { AiCallError } from "@/lib/automation/types";
 
 vi.mock("next/cache", () => ({ revalidateTag: vi.fn() }));
 const { runDailyRecipe } = await import("@/lib/automation/pipeline");
@@ -157,6 +158,15 @@ describe("runDailyRecipe: failures never publish", () => {
     expect(out.status === "failed" && out.error).toMatch(/Daily AI budget reached/);
     expect(ai.writer.calls()).toBe(0);
     expect(data.keywords[0].status).toBe("new"); // released: no retry can succeed today
+  });
+
+  it("counts the cost of a billed AI call that failed", async () => {
+    const { db, data } = automationDb();
+    const ai = fakeProviders();
+    ai.providers.writer = { estimateUsd: () => 0.5, run: async () => Promise.reject(new AiCallError("Claude declined the request.", 0.03, "anthropic", "claude-opus-5-5")) };
+    expect((await run(db, ai).result).status).toBe("failed");
+    expect(data.generation_attempts[0]).toMatchObject({ kind: "recipe", status: "error", provider: "anthropic", cost_usd: 0.03, error_message: "Claude declined the request." });
+    expect(data.publishing_jobs[0].cost_usd).toBe(0.03);
   });
 
   it("gives the keyword back and deletes the photo when the last retry fails", async () => {
