@@ -108,16 +108,20 @@ for each row
 when (new.status = 'published' and old.status is distinct from 'published' and new.source = 'ai')
 execute function public.mark_recipe_keyword_used();
 
--- recipes_track_approval: the only writer of approved_at / approved_by, and the
--- gate on how an AI recipe may go live.
+-- recipes_track_approval: who may put a recipe live, and the only writer of
+-- approved_at / approved_by.
 --   * approved_at / approved_by cannot be written directly by anyone: inserts
---     start them empty and updates keep the old values.
---   * An AI recipe becoming published is recorded as approved when the change
---     comes from a signed-in admin's session (the admin "Publish" button). That
---     is the only way an approval is created.
---   * Otherwise an AI recipe may only go live inside publish_generated_recipe
---     for its own job, which checks the approval count first. The worker's
---     service key cannot publish an AI recipe with a plain update.
+--     start them empty and updates keep the old values. source cannot change
+--     after insert, so an AI recipe cannot be relabelled as manual.
+--   * A recipe may go live (inserted as, or changed to, 'published') only from
+--       a) a signed-in admin's own session (the admin "Publish" button):
+--          PostgREST role "authenticated" and is_admin(). For an AI recipe this
+--          is recorded as the human approval; or
+--       b) the database owner role, which is what publish_generated_recipe
+--          runs as (security definer) after checking the approval count.
+--     This is checked from the database role executing the statement, which
+--     a client cannot choose or forge: the API only offers anon,
+--     authenticated and service_role. The worker's service key is refused.
 create or replace function public.track_recipe_approval()
 returns trigger
 language plpgsql
@@ -126,8 +130,12 @@ set search_path = ''
 as $$
 declare
   v_going_live boolean;
+  v_admin_session boolean;
 begin
   if tg_op = 'UPDATE' then
+    if new.source is distinct from old.source then
+      raise exception 'a recipe''s source cannot be changed' using errcode = 'insufficient_privilege';
+    end if;
     new.approved_at := old.approved_at;
     new.approved_by := old.approved_by;
     v_going_live := new.status = 'published' and old.status is distinct from 'published';
@@ -137,19 +145,26 @@ begin
     v_going_live := new.status = 'published';
   end if;
 
-  if new.source = 'ai' and v_going_live then
-    -- A signed-in admin's own session (PostgREST role "authenticated"), never
-    -- the service key, even if a user id is present.
-    if current_user = 'authenticated' and (select auth.uid()) is not null and (select public.is_admin()) then
-      if new.approved_at is null then
-        new.approved_at := now();
-        new.approved_by := (select auth.uid());
-      end if;
-    elsif new.generation_job_id is null
-       or coalesce(current_setting('app.auto_publish_job', true), '') <> new.generation_job_id::text then
-      raise exception 'an AI recipe can only be published by an admin or by publish_generated_recipe'
-        using errcode = 'insufficient_privilege';
+  if not v_going_live then
+    return new;
+  end if;
+
+  v_admin_session := current_user = 'authenticated'
+    and (select auth.uid()) is not null
+    and (select public.is_admin());
+
+  if v_admin_session then
+    if new.source = 'ai' and new.approved_at is null then
+      new.approved_at := now();
+      new.approved_by := (select auth.uid());
     end if;
+  elsif current_user is distinct from (
+    select pg_catalog.pg_get_userbyid(p.proowner)
+    from pg_catalog.pg_proc p
+    where p.oid = 'public.publish_generated_recipe(uuid)'::pg_catalog.regprocedure
+  ) then
+    raise exception 'only an admin, or publish_generated_recipe, can publish a recipe'
+      using errcode = 'insufficient_privilege';
   end if;
   return new;
 end;
@@ -257,7 +272,13 @@ alter table public.generation_attempts enable row level security;
 
 grant select, update on public.automation_settings to authenticated;
 grant select on public.publishing_job_events, public.generation_attempts to authenticated;
-grant all on public.automation_settings, public.publishing_job_events, public.generation_attempts to service_role;
+grant all on public.publishing_job_events, public.generation_attempts to service_role;
+-- The worker may read the settings but never change them (for example to turn
+-- automation on or lower the five-approval requirement), and may not make
+-- anyone an admin. Phase 1 granted it everything on admin_users; nothing uses that.
+grant select on public.automation_settings to service_role;
+revoke insert, update, delete, truncate on public.automation_settings from service_role;
+revoke insert, update, delete, truncate on public.admin_users from service_role;
 
 create policy "automation_settings: admin read"
   on public.automation_settings for select to authenticated
@@ -463,7 +484,9 @@ create or replace function public.publish_generated_recipe(p_job_id uuid)
 returns public.recipes
 language plpgsql
 volatile
-security invoker
+-- Runs as the database owner, which is what lets recipes_track_approval accept
+-- this publish. Callable only by service_role (see grants below).
+security definer
 set search_path = ''
 as $$
 declare
@@ -499,10 +522,6 @@ begin
     raise exception 'publishing job % has no recipe or keyword', p_job_id;
   end if;
 
-  -- Lets recipes_track_approval accept this one publish, for this job only,
-  -- until the end of the transaction.
-  perform set_config('app.auto_publish_job', p_job_id::text, true);
-
   update public.recipes
   set status = 'published', published_at = coalesce(published_at, now())
   where id = v_job.recipe_id
@@ -515,7 +534,6 @@ begin
   if v_recipe.id is null then
     raise exception 'recipe % is not an unpublished, untested AI recipe of job %', v_job.recipe_id, p_job_id;
   end if;
-  perform set_config('app.auto_publish_job', '', true);
 
   update public.keywords
   set status = 'used', assigned_recipe_id = v_recipe.id, last_error = null

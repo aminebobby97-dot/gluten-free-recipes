@@ -170,9 +170,8 @@ begin
     '[{"amount":"1","unit":"cup","name":"rice"}]', '[{"text":"Cook."}]',
     5, 20, 2, 'https://example.test/r.webp', 'Rice', 'ai', 'in_review', v_job
   );
-  perform set_config('app.auto_publish_job', v_job::text, true);
+  -- Runs as the database owner here, like publish_generated_recipe does.
   update public.recipes set status = 'published', published_at = now() where slug = 'earlier-automatic-recipe';
-  perform set_config('app.auto_publish_job', '', true);
   if (select count(*) from public.recipes where source = 'ai' and status = 'published') <> 5 then
     raise exception 'setup: expected 5 published AI recipes';
   end if;
@@ -250,9 +249,7 @@ begin
   if v_published.approved_at is not null then
     raise exception 'an automatic publish was counted as a human approval';
   end if;
-  if coalesce(current_setting('app.auto_publish_job', true), '') <> '' then
-    raise exception 'publish gate was left open after publish_generated_recipe';
-  end if;
+
   if (select status from public.keywords where id = v_kw.id) <> 'used' then
     raise exception 'keyword was not marked used';
   end if;
@@ -509,6 +506,158 @@ begin
     raise exception 'two daily jobs on one date';
   exception when unique_violation then null;
   end;
+end $$;
+
+-- 15. Publishing authorization. Every client-side attempt below also forges
+--     the old app.auto_publish_job session setting and an admin user id, to
+--     prove neither grants anything any more.
+insert into public.publishing_jobs (job_date, idempotency_key, status, mode)
+values ('2026-11-10', 'daily_recipe:2026-11-10', 'running', 'auto');
+insert into public.recipes (
+  title, slug, description, introduction, category_id, ingredients, instructions,
+  prep_time, cook_time, servings, featured_image, featured_image_alt, source, status, generation_job_id
+) values (
+  'Authorization test recipe', 'authorization-test-recipe', 'Desc.', 'Intro.',
+  (select id from public.categories where slug = 'gluten-free-dinner'),
+  '[{"amount":"1","unit":"cup","name":"rice"}]', '[{"text":"Cook."}]',
+  5, 20, 2, 'https://example.test/r.webp', 'Rice', 'ai', 'in_review',
+  (select id from public.publishing_jobs where idempotency_key = 'daily_recipe:2026-11-10')
+);
+
+-- 15.1 An authenticated non-admin cannot publish an AI recipe: not by update,
+--      not by inserting it published, not through publish_generated_recipe.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select set_config('app.auto_publish_job', (select id::text from public.publishing_jobs where idempotency_key = 'daily_recipe:2026-11-10'), true);
+update public.recipes set status = 'published', published_at = now() where slug = 'authorization-test-recipe';
+do $$
+begin
+  begin
+    insert into public.recipes (title, slug, category_id, source, status)
+    values ('Sneaky', 'sneaky-recipe', (select id from public.categories limit 1), 'ai', 'published');
+    raise exception 'non-admin inserted a published AI recipe';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.publish_generated_recipe(gen_random_uuid());
+    raise exception 'non-admin called publish_generated_recipe';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+do $$
+begin
+  if (select status from public.recipes where slug = 'authorization-test-recipe') <> 'in_review' then
+    raise exception '15.1 failed: a non-admin published an AI recipe';
+  end if;
+end $$;
+
+-- 15.2 The service-role worker cannot publish through a direct table write,
+--      cannot relabel an AI recipe as manual to publish it, and cannot insert
+--      a recipe already published.
+set local role service_role;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+select set_config('app.auto_publish_job', (select id::text from public.publishing_jobs where idempotency_key = 'daily_recipe:2026-11-10'), true);
+do $$
+begin
+  begin
+    update public.recipes set status = 'published', published_at = now() where slug = 'authorization-test-recipe';
+    raise exception '15.2 failed: service role published an AI recipe by update';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.recipes set source = 'manual' where slug = 'authorization-test-recipe';
+    raise exception '15.2 failed: service role relabelled an AI recipe';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into public.recipes (
+      title, slug, description, introduction, category_id, ingredients, instructions,
+      prep_time, cook_time, servings, featured_image, featured_image_alt, source, status
+    ) values (
+      'Worker manual recipe', 'worker-manual-recipe', 'Desc.', 'Intro.',
+      (select id from public.categories where slug = 'gluten-free-dinner'),
+      '[{"amount":"1","unit":"cup","name":"rice"}]', '[{"text":"Cook."}]',
+      5, 20, 2, 'https://example.test/r.webp', 'Rice', 'manual', 'published'
+    );
+    raise exception '15.2 failed: service role inserted a published recipe';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+
+-- 15.3 The worker cannot get around the five-approval rule: it cannot lower
+--      the requirement, switch automation on, or make itself an admin. (The
+--      approval count itself is covered by 4 and 4b: 4 approvals plus an
+--      automatic publish is refused, and approvals cannot be forged.)
+do $$
+begin
+  begin
+    update public.automation_settings set min_reviewed_before_auto = 0;
+    raise exception '15.3 failed: worker changed the approval requirement';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.automation_settings set enabled = true, publish_mode = 'auto';
+    raise exception '15.3 failed: worker switched automation on';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into public.admin_users (user_id) values ('00000000-0000-0000-0000-00000000000b');
+    raise exception '15.3 failed: worker made a user an admin';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+select set_config('app.auto_publish_job', '', true);
+
+-- 15.4 Authorized automatic publishing still works (5 approvals, auto mode,
+--      called by the worker), and is not counted as an approval.
+update public.automation_settings set enabled = true, publish_mode = 'auto';
+update public.publishing_jobs
+set recipe_id = (select id from public.recipes where slug = 'authorization-test-recipe'),
+    keyword_id = (select id from public.keywords where keyword = 'gluten free carrot cake')
+where idempotency_key = 'daily_recipe:2026-11-10';
+set local role service_role;
+do $$
+declare
+  v_recipe public.recipes;
+begin
+  v_recipe := public.publish_generated_recipe((select id from public.publishing_jobs where idempotency_key = 'daily_recipe:2026-11-10'));
+  if v_recipe.status <> 'published' or v_recipe.approved_at is not null then
+    raise exception '15.4 failed: authorized automatic publish did not work as expected';
+  end if;
+end $$;
+reset role;
+
+-- 15.5 Manual admin approval still works, for AI and manual recipes.
+insert into public.recipes (
+  title, slug, description, introduction, category_id, ingredients, instructions,
+  prep_time, cook_time, servings, featured_image, featured_image_alt, source, status
+) values
+  ('Admin approved AI recipe', 'admin-approved-ai-recipe', 'Desc.', 'Intro.',
+   (select id from public.categories where slug = 'gluten-free-dinner'),
+   '[{"amount":"1","unit":"cup","name":"rice"}]', '[{"text":"Cook."}]',
+   5, 20, 2, 'https://example.test/r.webp', 'Rice', 'ai', 'in_review'),
+  ('Admin manual recipe', 'admin-manual-recipe', 'Desc.', 'Intro.',
+   (select id from public.categories where slug = 'gluten-free-dinner'),
+   '[{"amount":"1","unit":"cup","name":"rice"}]', '[{"text":"Cook."}]',
+   5, 20, 2, 'https://example.test/r.webp', 'Rice', 'manual', 'draft');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+update public.recipes set status = 'published', published_at = now() where slug in ('admin-approved-ai-recipe', 'admin-manual-recipe');
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+do $$
+begin
+  if (select status <> 'published' or approved_by is distinct from '00000000-0000-0000-0000-00000000000a'
+      from public.recipes where slug = 'admin-approved-ai-recipe') then
+    raise exception '15.5 failed: admin approval of an AI recipe was not recorded';
+  end if;
+  if (select status <> 'published' or approved_at is not null from public.recipes where slug = 'admin-manual-recipe') then
+    raise exception '15.5 failed: admin could not publish a manual recipe, or it was marked as an AI approval';
+  end if;
 end $$;
 
 select 'All Phase 2 automation checks passed' as result;
