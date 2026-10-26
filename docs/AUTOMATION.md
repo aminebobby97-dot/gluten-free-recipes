@@ -94,9 +94,9 @@ GitHub keeps these encrypted and only gives them to the workflow. They never app
    | `SITE_URL` | Your live site, for example `https://www.yourdomain.com` (no trailing slash) |
    | `AUTOMATION_ENABLED` | `false` |
 
-## Step 6: Apply the database migration (after approval)
+## Step 6: Apply the database migration (done)
 
-The automation needs new tables and columns. The migration is in `supabase/proposed/` and has **not** been applied. Claude will explain exactly what it changes and ask for your approval first. Until it is applied, the admin **Automation** page shows "not installed" and everything else works as before.
+Done on 2026-10-26: the migration `supabase/migrations/20261027000001_phase2_automation.sql` was reviewed, approved and applied in the Supabase SQL Editor. It leaves automation switched off.
 
 ## Step 7: First test (dry run)
 

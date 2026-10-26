@@ -1,5 +1,5 @@
--- PROPOSED for review. NOT APPLIED. Not in supabase/migrations/, so
--- `supabase db push` ignores it. Move it there once approved.
+-- Applied to production on 2026-10-26 through the Supabase SQL Editor, after
+-- review and approval. Only these two comment lines differ from that SQL.
 --
 -- Phase 2: daily recipe automation.
 --   * automation_settings      single-row kill switch and publish mode (off by default)

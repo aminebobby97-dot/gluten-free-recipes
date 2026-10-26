@@ -1,6 +1,6 @@
--- Checks for the PROPOSED Phase 2 migration. Run after all migrations, the seed
--- and supabase/proposed/20261027000001_phase2_automation.sql are applied:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/proposed/tests/phase2_automation_test.sql
+-- Checks for the Phase 2 automation migration. Run after all migrations and the
+-- seed are applied:
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/phase2_automation_test.sql
 -- Everything runs inside a transaction that is rolled back.
 
 begin;
