@@ -37,8 +37,8 @@ Copy `.env.example` to `.env.local` for local development. In Vercel, add the sa
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase → Project Settings → API → Project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes | Supabase → Project Settings → API Keys → publishable key (or set `NEXT_PUBLIC_SUPABASE_ANON_KEY` with the legacy anon key) |
 | `NEXT_PUBLIC_CONTACT_EMAIL` | Optional | Shown on Contact and Privacy pages |
-| `SUPABASE_SECRET_KEY` | No (Phase 1) | Reserved for the future automation worker. Never expose it to the browser |
-| `AUTOMATION_ENABLED` | No | Keep `false`. Nothing schedules automation in Phase 1 |
+| `REVALIDATE_SECRET` | For automation | 32+ random characters (`openssl rand -hex 32`). Lets the automation worker refresh recipe pages. Use the same value in GitHub |
+| `SUPABASE_SECRET_KEY` | No | Not used by the website. The automation worker reads it from GitHub, see [AUTOMATION.md](AUTOMATION.md) |
 
 The publishable key is safe in the browser because Row Level Security only lets it read categories and published recipes. The secret/service-role key bypasses RLS and is only read by `src/lib/supabase/service.ts`, which is marked `server-only`.
 
