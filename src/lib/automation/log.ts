@@ -30,7 +30,7 @@ export async function logEvent(
   if (error) console.error(`Could not log ${step}/${status}: ${error.message}`);
 }
 
-export type AttemptKind = "recipe" | "review" | "repair" | "image" | "image_check";
+export type AttemptKind = "recipe" | "review" | "repair" | "image" | "image_check" | "pin_image" | "pin_image_check";
 
 export interface AttemptRecord {
   jobId: string;

@@ -80,6 +80,14 @@ export interface Photo {
   mimeType: "image/webp" | "image/jpeg" | "image/png";
 }
 
+export type PhotoOrientation = "landscape" | "portrait";
+
+export interface PhotoRequest {
+  recipe: GeneratedRecipe;
+  /** Landscape 3:2 for the site, portrait 2:3 for Pinterest. */
+  orientation: PhotoOrientation;
+}
+
 export interface PhotoVerdict {
   ok: boolean;
   problems: string[];
@@ -89,7 +97,7 @@ export interface AiProviders {
   writer: AiStep<WriterInput, unknown>;
   repairer: AiStep<RepairInput, unknown>;
   reviewer: AiStep<GeneratedRecipe, ReviewVerdict>;
-  photographer: AiStep<GeneratedRecipe, Photo>;
+  photographer: AiStep<PhotoRequest, Photo>;
   photoChecker: AiStep<{ recipe: GeneratedRecipe; photo: Photo }, PhotoVerdict>;
 }
 

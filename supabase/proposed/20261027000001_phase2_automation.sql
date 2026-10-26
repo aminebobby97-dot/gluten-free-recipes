@@ -165,7 +165,7 @@ create table public.generation_attempts (
   id uuid primary key default gen_random_uuid(),
   job_id uuid not null references public.publishing_jobs (id) on delete cascade,
   keyword_id uuid references public.keywords (id) on delete set null,
-  kind text not null check (kind in ('recipe', 'review', 'repair', 'image', 'image_check')),
+  kind text not null check (kind in ('recipe', 'review', 'repair', 'image', 'image_check', 'pin_image', 'pin_image_check')),
   attempt integer not null default 1 check (attempt >= 1),
   provider text not null check (char_length(provider) between 2 and 40),
   model text not null check (char_length(model) between 2 and 100),
