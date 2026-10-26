@@ -8,6 +8,7 @@ const items = [
   { href: "/admin/recipes", label: "Recipes" },
   { href: "/admin/categories", label: "Categories" },
   { href: "/admin/keywords", label: "Keywords" },
+  { href: "/admin/automation", label: "Automation" },
   { href: "/admin/jobs", label: "Publishing jobs" },
   { href: "/admin/pinterest", label: "Pinterest" },
   { href: "/admin/errors", label: "Errors" },

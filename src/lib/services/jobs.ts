@@ -7,6 +7,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { dbError, ServiceError } from "./errors";
 
 export const MAX_JOB_RETRIES = 3;
+/** How long a worker owns a running job. A crashed run's job can be taken over after this. */
+export const JOB_LEASE_MINUTES = 30;
 
 export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
 
@@ -24,6 +26,13 @@ export interface PublishingJob {
   started_at: string | null;
   created_at: string;
   completed_at: string | null;
+  // Phase 2 columns (proposed migration 20261027000001).
+  mode?: "dry_run" | "review" | "auto";
+  trigger?: "schedule" | "manual";
+  checkpoint?: Record<string, unknown>;
+  lease_expires_at?: string | null;
+  run_url?: string | null;
+  cost_usd?: number;
 }
 
 /** "2026-10-26" for a Date, using UTC so every server agrees on the day. */
@@ -50,21 +59,24 @@ export async function getOrCreateDailyJob(db: SupabaseClient, jobDate: string, j
 }
 
 /**
- * Claims a job for processing. Only pending jobs, or failed jobs that still
- * have retries left, can be claimed; returns null if another worker has it or
- * it already succeeded.
+ * Claims a job for processing. Only pending jobs, failed jobs that still have
+ * retries left, or running jobs whose lease has expired (a crashed run) can be
+ * claimed; returns null if another worker has it or it already succeeded.
  */
-export async function claimJob(db: SupabaseClient, job: PublishingJob): Promise<PublishingJob | null> {
-  if (job.status === "succeeded" || job.status === "running" || job.status === "cancelled") return null;
+export async function claimJob(db: SupabaseClient, job: PublishingJob, now = new Date()): Promise<PublishingJob | null> {
+  if (job.status === "succeeded" || job.status === "cancelled") return null;
   if (job.status === "failed" && job.retry_count >= MAX_JOB_RETRIES) return null;
+  const leaseExpired = job.lease_expires_at != null && new Date(job.lease_expires_at) <= now;
+  if (job.status === "running" && !leaseExpired) return null;
 
-  const { data, error } = await db
+  const lease_expires_at = new Date(now.getTime() + JOB_LEASE_MINUTES * 60_000).toISOString();
+  let query = db
     .from("publishing_jobs")
-    .update({ status: "running", started_at: new Date().toISOString(), error_message: null })
+    .update({ status: "running", started_at: now.toISOString(), error_message: null, lease_expires_at })
     .eq("id", job.id)
-    .eq("status", job.status) // optimistic lock: fails if someone else changed it
-    .select("*")
-    .maybeSingle();
+    .eq("status", job.status); // optimistic lock: fails if someone else changed it
+  if (job.status === "running") query = query.eq("lease_expires_at", job.lease_expires_at);
+  const { data, error } = await query.select("*").maybeSingle();
   if (error) throw dbError("Claim publishing job", error);
   return (data as PublishingJob | null) ?? null;
 }

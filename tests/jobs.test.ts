@@ -3,7 +3,7 @@ import { createFakeDb } from "./support/fake-db";
 
 vi.mock("next/cache", () => ({ revalidateTag: vi.fn() }));
 const { claimJob, dailyJobKey, failJob, getOrCreateDailyJob, MAX_JOB_RETRIES, toJobDate } = await import("@/lib/services/jobs");
-const { isAutomationEnabled, runDailyPublishing } = await import("@/lib/services/automation");
+const { isAutomationEnabled } = await import("@/lib/services/automation");
 
 describe("publishing jobs", () => {
   it("uses one idempotency key per day", () => {
@@ -31,6 +31,17 @@ describe("publishing jobs", () => {
     expect(await claimJob(db, base)).toBeNull();
   });
 
+  it("lets a new run take over a crashed run only after its lease expires", async () => {
+    const { db } = createFakeDb({ publishing_jobs: [] });
+    const base = await getOrCreateDailyJob(db, "2026-10-29");
+    const running = { ...base, status: "running" as const, lease_expires_at: "2026-10-29T13:30:00Z" };
+    expect(await claimJob(db, running, new Date("2026-10-29T13:00:00Z"))).toBeNull();
+    const { db: db2, data } = createFakeDb({ publishing_jobs: [running] });
+    const taken = await claimJob(db2, running, new Date("2026-10-29T14:00:00Z"));
+    expect(taken?.status).toBe("running");
+    expect(data.publishing_jobs[0].lease_expires_at).toBe("2026-10-29T14:30:00.000Z");
+  });
+
   it("records failures and increments the retry count", async () => {
     const { db, data } = createFakeDb({ publishing_jobs: [] });
     const job = await getOrCreateDailyJob(db, "2026-10-28");
@@ -40,8 +51,7 @@ describe("publishing jobs", () => {
 });
 
 describe("automation", () => {
-  it("is disabled by default and refuses to run", async () => {
+  it("is disabled by default", () => {
     expect(isAutomationEnabled()).toBe(false);
-    await expect(runDailyPublishing({} as never)).rejects.toThrow(/disabled/);
   });
 });

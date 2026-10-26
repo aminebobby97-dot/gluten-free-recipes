@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AlertIcon, ArrowDownIcon, ClockIcon, InfoIcon, LeafIcon, PinterestIcon, ServingsIcon } from "@/components/icons";
 import { Breadcrumbs } from "@/components/site/breadcrumbs";
 import { absoluteUrl } from "@/lib/env";
+import { ALLERGEN_LABELS, type Allergen } from "@/lib/automation/allergens";
 import { analyzeIngredients, type IngredientFinding } from "@/lib/recipes/gluten";
 import { formatDate, formatMinutes, totalMinutes } from "@/lib/recipes/format";
 import type { Ingredient, InstructionStep, Nutrition, RecipeCardData, RecipeWithCategory } from "@/lib/recipes/types";
@@ -83,6 +84,9 @@ export function RecipeArticle({ recipe, related }: RecipeArticleProps) {
             priority
           />
         </div>
+        {recipe.image_source === "ai" && recipe.featured_image && (
+          <figcaption className="mx-auto mt-2 max-w-5xl text-right text-xs text-ink-faint">AI-generated image of the finished dish.</figcaption>
+        )}
       </figure>
 
       <div className="container-page">
@@ -245,6 +249,8 @@ function RecipeCardSection({
   pageUrl: string;
 }) {
   const ingredientGroups = groupBy(recipe.ingredients.map((ing, index) => ({ ing, index })), (x) => x.ing.group);
+  // Only AI recipes have a checked allergen declaration; manual ones leave it empty.
+  const allergens = recipe.source === "ai" ? (recipe.allergens ?? []).flatMap((a) => (a in ALLERGEN_LABELS ? [ALLERGEN_LABELS[a as Allergen]] : [])) : [];
   const stepGroups = groupBy(recipe.instructions.map((step, index) => ({ step, index })), (x) => x.step.group);
 
   return (
@@ -298,6 +304,11 @@ function RecipeCardSection({
               </ul>
             </div>
           ))}
+          {allergens.length > 0 && (
+            <p className="mt-5 rounded-xl bg-cream-deep/60 px-4 py-3 text-sm text-ink-soft">
+              <strong className="font-semibold text-ink">Contains:</strong> {allergens.join(", ")}. Check labels on packaged ingredients for other allergens.
+            </p>
+          )}
         </div>
         <div>
           <h3 className="font-serif text-2xl font-medium text-ink">Instructions</h3>

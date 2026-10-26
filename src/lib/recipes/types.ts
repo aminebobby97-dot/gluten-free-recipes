@@ -95,6 +95,12 @@ export interface Recipe {
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Phase 2 columns: absent until the automation migration is applied. */
+  source?: "manual" | "ai";
+  image_source?: "upload" | "ai" | null;
+  /** Declared and checked for AI recipes; empty (unknown) for manual ones. */
+  allergens?: string[];
+  generation_job_id?: string | null;
 }
 
 export interface RecipeWithCategory extends Recipe {
