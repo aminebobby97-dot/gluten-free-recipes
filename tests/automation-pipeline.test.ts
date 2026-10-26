@@ -75,15 +75,22 @@ describe("runDailyRecipe: review mode", () => {
   });
 
   it("stays in review mode until five AI recipes were approved, even when auto is requested", async () => {
-    const reviewed = Array.from({ length: 4 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published" }));
+    const reviewed = Array.from({ length: 4 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" }));
     const { db } = automationDb({ settings: { publish_mode: "auto" }, recipes: reviewed });
+    expect(await run(db, fakeProviders(), { requestedMode: "auto" }).result).toMatchObject({ mode: "review", published: false });
+  });
+
+  it("counts only human approvals, not AI recipes that were published automatically", async () => {
+    const approved = Array.from({ length: 4 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" }));
+    const automatic = { id: "auto-1", title: "Automatic", slug: "automatic", source: "ai", status: "published", approved_at: null };
+    const { db } = automationDb({ settings: { publish_mode: "auto" }, recipes: [...approved, automatic] });
     expect(await run(db, fakeProviders(), { requestedMode: "auto" }).result).toMatchObject({ mode: "review", published: false });
   });
 });
 
 describe("runDailyRecipe: auto mode", () => {
   it("publishes in one transaction and refreshes the site", async () => {
-    const reviewed = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published" }));
+    const reviewed = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" }));
     const { db, data } = automationDb({ settings: { publish_mode: "auto" }, recipes: reviewed });
     const { result, site } = run(db, fakeProviders(), { requestedMode: "auto" });
     expect(await result).toMatchObject({ status: "succeeded", mode: "auto", published: true });
@@ -92,7 +99,7 @@ describe("runDailyRecipe: auto mode", () => {
   });
 
   it("keeps the published recipe when only the site refresh fails", async () => {
-    const reviewed = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published" }));
+    const reviewed = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" }));
     const { db, data } = automationDb({ settings: { publish_mode: "auto" }, recipes: reviewed });
     const ai = fakeProviders();
     const images = fakeImages();

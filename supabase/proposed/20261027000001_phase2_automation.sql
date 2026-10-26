@@ -6,6 +6,7 @@
 --   * publishing_job_events    append-only step log for every job
 --   * generation_attempts      every AI call (recipe, review, image, image check) with tokens and cost
 --   * recipes / keywords / publishing_jobs / pinterest_posts: new columns
+--   * recipes.approved_at / approved_by: human approvals, written only by a trigger
 --   * RPCs: claim_next_keyword (replaced), release_keyword, find_similar_keywords,
 --     find_similar_recipes, ai_spend, publish_generated_recipe
 --
@@ -72,7 +73,11 @@ alter table public.recipes
   -- Major US food allergens the recipe contains (FDA's nine minus wheat, which a
   -- gluten-free recipe never contains). Empty array = none of them.
   add column allergens text[] not null default '{}'
-    check (allergens <@ array['milk', 'eggs', 'fish', 'shellfish', 'tree_nuts', 'peanuts', 'soy', 'sesame']::text[]);
+    check (allergens <@ array['milk', 'eggs', 'fish', 'shellfish', 'tree_nuts', 'peanuts', 'soy', 'sesame']::text[]),
+  -- Human approval of an AI recipe: set only by recipes_track_approval below,
+  -- when a signed-in admin publishes it. Automatic publishing counts these.
+  add column approved_at timestamptz,
+  add column approved_by uuid references auth.users (id) on delete set null;
 
 -- Near-duplicate title and focus keyword detection.
 create index recipes_title_core_trgm_idx on public.recipes using gin (public.keyword_core(title) extensions.gin_trgm_ops);
@@ -102,6 +107,57 @@ after update of status on public.recipes
 for each row
 when (new.status = 'published' and old.status is distinct from 'published' and new.source = 'ai')
 execute function public.mark_recipe_keyword_used();
+
+-- recipes_track_approval: the only writer of approved_at / approved_by, and the
+-- gate on how an AI recipe may go live.
+--   * approved_at / approved_by cannot be written directly by anyone: inserts
+--     start them empty and updates keep the old values.
+--   * An AI recipe becoming published is recorded as approved when the change
+--     comes from a signed-in admin's session (the admin "Publish" button). That
+--     is the only way an approval is created.
+--   * Otherwise an AI recipe may only go live inside publish_generated_recipe
+--     for its own job, which checks the approval count first. The worker's
+--     service key cannot publish an AI recipe with a plain update.
+create or replace function public.track_recipe_approval()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_going_live boolean;
+begin
+  if tg_op = 'UPDATE' then
+    new.approved_at := old.approved_at;
+    new.approved_by := old.approved_by;
+    v_going_live := new.status = 'published' and old.status is distinct from 'published';
+  else
+    new.approved_at := null;
+    new.approved_by := null;
+    v_going_live := new.status = 'published';
+  end if;
+
+  if new.source = 'ai' and v_going_live then
+    -- A signed-in admin's own session (PostgREST role "authenticated"), never
+    -- the service key, even if a user id is present.
+    if current_user = 'authenticated' and (select auth.uid()) is not null and (select public.is_admin()) then
+      if new.approved_at is null then
+        new.approved_at := now();
+        new.approved_by := (select auth.uid());
+      end if;
+    elsif new.generation_job_id is null
+       or coalesce(current_setting('app.auto_publish_job', true), '') <> new.generation_job_id::text then
+      raise exception 'an AI recipe can only be published by an admin or by publish_generated_recipe'
+        using errcode = 'insufficient_privilege';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger recipes_track_approval
+before insert or update on public.recipes
+for each row execute function public.track_recipe_approval();
 
 -- ---------------------------------------------------------------------------
 -- Keywords: priority and failure tracking.
@@ -275,6 +331,9 @@ declare
   v_keyword public.keywords;
   v_clash record;
   v_checked integer := 0;
+  -- Keywords rejected during this call. Excluded explicitly, so the loop can
+  -- never pick the same keyword twice even if its status update were undone.
+  v_rejected uuid[] := '{}';
 begin
   select * into v_settings from public.automation_settings where id;
 
@@ -285,6 +344,7 @@ begin
       and assigned_recipe_id is null
       and attempt_count < 3
       and (keyword_difficulty is null or keyword_difficulty <= v_settings.max_keyword_difficulty)
+      and id <> all (v_rejected)
     order by priority desc, opportunity_score desc nulls last, created_at
     for update skip locked
     limit 1;
@@ -303,6 +363,7 @@ begin
     set status = 'rejected',
         last_error = left(format('Too similar to %s "%s" (similarity %s)', replace(v_clash.kind, '_', ' '), v_clash.text, round(v_clash.similarity::numeric, 2)), 2000)
     where id = v_keyword.id;
+    v_rejected := v_rejected || v_keyword.id;
 
     v_checked := v_checked + 1;
     if v_checked >= 50 then
@@ -395,7 +456,8 @@ grant execute on function public.ai_spend(timestamptz) to authenticated, service
 -- public. In one transaction it publishes the job's recipe, marks the keyword
 -- used and completes the job. If any part fails, nothing changes. Refused
 -- while automation is off, in review mode, or before enough AI recipes were
--- approved by a person. The recipes_published_complete check still applies.
+-- approved by a person (recipes.approved_at, set only by an admin's publish).
+-- The recipes_published_complete check still applies.
 -- ---------------------------------------------------------------------------
 create or replace function public.publish_generated_recipe(p_job_id uuid)
 returns public.recipes
@@ -415,9 +477,10 @@ begin
     raise exception 'automatic publishing is turned off';
   end if;
 
+  -- Human approvals only (see recipes_track_approval), whatever their status now.
   select count(*) into v_reviewed
   from public.recipes
-  where source = 'ai' and status = 'published';
+  where source = 'ai' and approved_at is not null;
   if v_reviewed < v_settings.min_reviewed_before_auto then
     raise exception 'only % of % required AI recipes have been approved by a person', v_reviewed, v_settings.min_reviewed_before_auto;
   end if;
@@ -436,6 +499,10 @@ begin
     raise exception 'publishing job % has no recipe or keyword', p_job_id;
   end if;
 
+  -- Lets recipes_track_approval accept this one publish, for this job only,
+  -- until the end of the transaction.
+  perform set_config('app.auto_publish_job', p_job_id::text, true);
+
   update public.recipes
   set status = 'published', published_at = coalesce(published_at, now())
   where id = v_job.recipe_id
@@ -448,6 +515,7 @@ begin
   if v_recipe.id is null then
     raise exception 'recipe % is not an unpublished, untested AI recipe of job %', v_job.recipe_id, p_job_id;
   end if;
+  perform set_config('app.auto_publish_job', '', true);
 
   update public.keywords
   set status = 'used', assigned_recipe_id = v_recipe.id, last_error = null

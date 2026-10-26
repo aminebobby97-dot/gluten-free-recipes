@@ -87,8 +87,9 @@ export async function loadSettings(db: SupabaseClient): Promise<AutomationSettin
   return { ...s, daily_budget_usd: Number(s.daily_budget_usd), max_keyword_difficulty: Number(s.max_keyword_difficulty) };
 }
 
+/** AI recipes a person approved (approved_at is set only when an admin publishes one), whatever their status now. */
 async function countReviewedAiRecipes(db: SupabaseClient): Promise<number> {
-  const { data, error } = await db.from("recipes").select("id").eq("source", "ai").eq("status", "published");
+  const { data, error } = await db.from("recipes").select("id").eq("source", "ai").not("approved_at", "is", null);
   if (error) throw dbError("Count reviewed recipes", error);
   return data?.length ?? 0;
 }

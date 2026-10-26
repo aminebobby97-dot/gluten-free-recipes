@@ -100,15 +100,117 @@ begin
 end $$;
 reset role;
 
+-- Five AI recipes waiting for review. Approval columns cannot be pre-filled.
 insert into public.recipes (
   title, slug, description, introduction, category_id, ingredients, instructions,
-  prep_time, cook_time, servings, featured_image, featured_image_alt, source, status, published_at
+  prep_time, cook_time, servings, featured_image, featured_image_alt, source, status,
+  approved_at, approved_by
 )
 select 'Reviewed recipe ' || n, 'reviewed-recipe-' || n, 'Desc.', 'Intro.',
        (select id from public.categories where slug = 'gluten-free-dinner'),
        '[{"amount":"1","unit":"cup","name":"rice"}]', '[{"text":"Cook."}]',
-       5, 20, 2, 'https://example.test/r.webp', 'Rice', 'ai', 'published', now()
+       5, 20, 2, 'https://example.test/r.webp', 'Rice', 'ai', 'in_review',
+       now(), '00000000-0000-0000-0000-00000000000a'
 from generate_series(1, 5) as n;
+
+-- 4b. Approvals are tracked only from a signed-in admin's publish.
+do $$
+begin
+  if exists (select 1 from public.recipes where slug like 'reviewed-recipe-%' and (approved_at is not null or approved_by is not null)) then
+    raise exception 'approval was pre-filled on insert';
+  end if;
+end $$;
+
+--     The worker's service key cannot publish an AI recipe directly, and cannot
+--     write approval columns, even with an admin's user id in the session.
+set local role service_role;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+do $$
+begin
+  begin
+    update public.recipes set status = 'published', published_at = now() where slug = 'reviewed-recipe-1';
+    raise exception 'service role published an AI recipe directly';
+  exception when insufficient_privilege then null;
+  end;
+  update public.recipes set approved_at = now(), approved_by = '00000000-0000-0000-0000-00000000000a' where slug like 'reviewed-recipe-%';
+  if exists (select 1 from public.recipes where slug like 'reviewed-recipe-%' and approved_at is not null) then
+    raise exception 'service role forged an approval';
+  end if;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+
+--     A signed-in non-admin cannot approve either (RLS blocks the update).
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+update public.recipes set status = 'published', published_at = now() where slug = 'reviewed-recipe-1';
+reset role;
+
+--     The admin approves four: still not enough for automatic publishing.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+update public.recipes set status = 'published', published_at = now() where slug in ('reviewed-recipe-1', 'reviewed-recipe-2', 'reviewed-recipe-3', 'reviewed-recipe-4');
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+
+--     A fifth AI recipe that went live without a person (an earlier automatic
+--     publish) makes 5 published but only 4 approved: it must not count.
+do $$
+declare
+  v_job uuid;
+begin
+  insert into public.publishing_jobs (job_date, idempotency_key, status, mode)
+  values ('2026-10-30', 'daily_recipe:2026-10-30', 'succeeded', 'auto') returning id into v_job;
+  insert into public.recipes (
+    title, slug, description, introduction, category_id, ingredients, instructions,
+    prep_time, cook_time, servings, featured_image, featured_image_alt, source, status, generation_job_id
+  ) values (
+    'Earlier automatic recipe', 'earlier-automatic-recipe', 'Desc.', 'Intro.',
+    (select id from public.categories where slug = 'gluten-free-dinner'),
+    '[{"amount":"1","unit":"cup","name":"rice"}]', '[{"text":"Cook."}]',
+    5, 20, 2, 'https://example.test/r.webp', 'Rice', 'ai', 'in_review', v_job
+  );
+  perform set_config('app.auto_publish_job', v_job::text, true);
+  update public.recipes set status = 'published', published_at = now() where slug = 'earlier-automatic-recipe';
+  perform set_config('app.auto_publish_job', '', true);
+  if (select count(*) from public.recipes where source = 'ai' and status = 'published') <> 5 then
+    raise exception 'setup: expected 5 published AI recipes';
+  end if;
+end $$;
+
+set local role service_role;
+do $$
+declare
+  v_job uuid := (select id from public.publishing_jobs where idempotency_key = 'daily_recipe:2026-10-31');
+begin
+  if (select count(*) from public.recipes where approved_at is not null and approved_by = '00000000-0000-0000-0000-00000000000a') <> 4 then
+    raise exception 'admin approvals were not recorded with the admin id';
+  end if;
+  begin
+    perform public.publish_generated_recipe(v_job);
+    raise exception 'auto publish allowed after four approvals';
+  exception when raise_exception then
+    if sqlerrm not like 'only 4 of 5 required AI recipes%' then raise; end if;
+  end;
+end $$;
+reset role;
+
+--     An approval survives unpublishing and cannot be changed by an admin edit.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+update public.recipes set status = 'draft' where slug = 'reviewed-recipe-1';
+update public.recipes set approved_by = null, approved_at = null where slug = 'reviewed-recipe-2';
+update public.recipes set status = 'published', published_at = now() where slug = 'reviewed-recipe-5';
+update public.recipes set status = 'published' where slug = 'reviewed-recipe-1';
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+
+do $$
+begin
+  if (select count(*) from public.recipes where source = 'ai' and approved_at is not null) <> 5 then
+    raise exception 'expected 5 approvals, got %', (select count(*) from public.recipes where source = 'ai' and approved_at is not null);
+  end if;
+end $$;
 
 -- 5. Worker happy path in auto mode: claim -> draft -> atomic publish.
 set local role service_role;
@@ -144,6 +246,12 @@ begin
   v_published := public.publish_generated_recipe(v_job);
   if v_published.status <> 'published' or v_published.published_at is null then
     raise exception 'recipe was not published';
+  end if;
+  if v_published.approved_at is not null then
+    raise exception 'an automatic publish was counted as a human approval';
+  end if;
+  if coalesce(current_setting('app.auto_publish_job', true), '') <> '' then
+    raise exception 'publish gate was left open after publish_generated_recipe';
   end if;
   if (select status from public.keywords where id = v_kw.id) <> 'used' then
     raise exception 'keyword was not marked used';
@@ -272,6 +380,64 @@ begin
   end if;
 end $$;
 
+-- 10b. Regression: the claim loop never re-selects a keyword it rejected.
+--      Several high-priority duplicates are rejected one by one, then the next
+--      valid keyword is claimed. A temporary trigger then blocks the 'rejected'
+--      status update, as if it were undone: the loop must still move on instead
+--      of picking the same keyword again.
+do $$
+declare
+  v_kw public.keywords;
+begin
+  update public.keywords set status = 'used' where status = 'new';
+  insert into public.keywords (keyword, priority) values
+    ('easy gluten free lemon bars', 30),   -- duplicates the published lemon bars
+    ('lemon bars gluten free', 20),        -- same
+    ('best lemon bars recipe', 10),        -- same
+    ('gluten free carrot cake', 0);        -- valid
+
+  v_kw := public.claim_next_keyword(gen_random_uuid());
+  if v_kw.keyword is distinct from 'gluten free carrot cake' then
+    raise exception 'expected carrot cake after rejecting duplicates, got %', v_kw.keyword;
+  end if;
+  if (select count(*) from public.keywords
+      where keyword in ('easy gluten free lemon bars', 'lemon bars gluten free', 'best lemon bars recipe')
+        and status = 'rejected' and last_error like 'Too similar to%' and attempt_count = 0) <> 3 then
+    raise exception 'duplicates were not each rejected exactly once with a reason';
+  end if;
+  if public.claim_next_keyword(gen_random_uuid()) is not null then
+    raise exception 'a rejected keyword was claimed later';
+  end if;
+end $$;
+
+reset role;
+create function pg_temp.keep_keyword_new() returns trigger language plpgsql as $$
+begin
+  if new.status = 'rejected' then new.status := old.status; end if;
+  return new;
+end $$;
+create trigger zz_keep_keyword_new before update on public.keywords
+for each row execute function pg_temp.keep_keyword_new();
+set local role service_role;
+
+do $$
+declare
+  v_kw public.keywords;
+begin
+  insert into public.keywords (keyword, priority) values
+    ('lemon bars easy', 50),               -- duplicate, and its rejection is blocked
+    ('gluten free pumpkin pie', 0);        -- valid
+  v_kw := public.claim_next_keyword(gen_random_uuid());
+  if v_kw.keyword is distinct from 'gluten free pumpkin pie' then
+    raise exception 'loop re-selected a rejected keyword or gave up, got %', v_kw.keyword;
+  end if;
+end $$;
+
+reset role;
+drop trigger zz_keep_keyword_new on public.keywords;
+update public.keywords set status = 'rejected' where keyword = 'lemon bars easy';
+set local role service_role;
+
 -- 11. AI spend is summed per UTC day.
 do $$
 declare
@@ -325,6 +491,9 @@ do $$
 begin
   if (select status from public.keywords where keyword = 'gluten free pizza crust') <> 'used' then
     raise exception 'admin publish did not mark keyword used';
+  end if;
+  if (select approved_by from public.recipes where slug = 'gluten-free-pizza-crust') is distinct from '00000000-0000-0000-0000-00000000000a' then
+    raise exception 'admin publish was not recorded as an approval';
   end if;
 end $$;
 

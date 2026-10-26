@@ -40,7 +40,7 @@ export async function getAutomationOverview(db: SupabaseClient): Promise<Automat
   startOfDay.setUTCHours(0, 0, 0, 0);
   const [spend, approved, inReview] = await Promise.all([
     db.rpc("ai_spend", { p_since: startOfDay.toISOString() }),
-    db.from("recipes").select("id", { count: "exact", head: true }).eq("source", "ai").eq("status", "published"),
+    db.from("recipes").select("id", { count: "exact", head: true }).eq("source", "ai").not("approved_at", "is", null),
     db.from("recipes").select("id", { count: "exact", head: true }).eq("source", "ai").eq("status", "in_review"),
   ]);
   if (spend.error) throw dbError("Read AI spend", spend.error);

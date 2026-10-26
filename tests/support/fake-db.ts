@@ -52,6 +52,11 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
       neq: (col: string, val: unknown) => (filters.push((r) => r[col] !== val), builder),
       in: (col: string, vals: unknown[]) => (filters.push((r) => vals.includes(r[col])), builder),
       is: (col: string, val: unknown) => (filters.push((r) => (r[col] ?? null) === val), builder),
+      not: (col: string, operator: string, val: unknown) => {
+        if (operator !== "is") throw new Error(`fake-db: not(${operator}) is not supported`);
+        filters.push((r) => (r[col] ?? null) !== val);
+        return builder;
+      },
       order: () => builder,
       limit: () => builder,
       single: async () => {

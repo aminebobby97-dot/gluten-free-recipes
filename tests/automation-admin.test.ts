@@ -26,7 +26,8 @@ describe("automation admin data", () => {
       {
         automation_settings: [{ id: true, enabled: false, publish_mode: "review", min_reviewed_before_auto: 5, daily_budget_usd: "3.00", similarity_threshold: 0.5 }],
         recipes: [
-          { id: "a", source: "ai", status: "published" },
+          { id: "a", source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" },
+          { id: "d", source: "ai", status: "published", approved_at: null }, // published automatically: not an approval
           { id: "b", source: "ai", status: "in_review" },
           { id: "c", source: "manual", status: "published" },
         ],
