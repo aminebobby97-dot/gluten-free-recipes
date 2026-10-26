@@ -6,7 +6,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Row = Record<string, unknown>;
 
-export function createFakeDb(tables: Record<string, Row[]> = {}) {
+export type FakeRpc = (args: Record<string, unknown>, data: Record<string, Row[]>) => unknown;
+
+export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<string, FakeRpc> = {}) {
   const data: Record<string, Row[]> = Object.fromEntries(Object.entries(tables).map(([k, v]) => [k, v.map((r) => ({ ...r }))]));
   const calls: Array<{ table: string; op: string; payload?: unknown }> = [];
 
@@ -47,6 +49,10 @@ export function createFakeDb(tables: Record<string, Row[]> = {}) {
       delete: () => ((op = "delete"), calls.push({ table, op }), builder),
       eq: (col: string, val: unknown) => (filters.push((r) => r[col] === val), builder),
       neq: (col: string, val: unknown) => (filters.push((r) => r[col] !== val), builder),
+      in: (col: string, vals: unknown[]) => (filters.push((r) => vals.includes(r[col])), builder),
+      is: (col: string, val: unknown) => (filters.push((r) => (r[col] ?? null) === val), builder),
+      order: () => builder,
+      limit: () => builder,
       single: async () => {
         const rows = run();
         return rows.length === 1 ? { data: rows[0], error: null } : { data: null, error: { message: `expected 1 row, got ${rows.length}` } };
@@ -57,5 +63,16 @@ export function createFakeDb(tables: Record<string, Row[]> = {}) {
     return builder;
   }
 
-  return { db: { from } as unknown as SupabaseClient, data, calls };
+  async function rpc(name: string, args: Record<string, unknown> = {}) {
+    calls.push({ table: `rpc:${name}`, op: "rpc", payload: args });
+    const handler = rpcs[name];
+    if (!handler) return { data: null, error: { message: `rpc ${name} is not faked` } };
+    try {
+      return { data: handler(args, data), error: null };
+    } catch (err) {
+      return { data: null, error: { message: err instanceof Error ? err.message : String(err) } };
+    }
+  }
+
+  return { db: { from, rpc } as unknown as SupabaseClient, data, calls };
 }

@@ -328,6 +328,20 @@ begin
   end if;
 end $$;
 
+-- 14. Dry runs may repeat within a day; daily jobs may not.
+do $$
+begin
+  insert into public.publishing_jobs (job_type, job_date, idempotency_key, mode) values
+    ('dry_run', '2026-11-05', 'dry_run:2026-11-05T10:00:00Z', 'dry_run'),
+    ('dry_run', '2026-11-05', 'dry_run:2026-11-05T11:00:00Z', 'dry_run');
+  insert into public.publishing_jobs (job_type, job_date, idempotency_key) values ('daily_recipe', '2026-11-05', 'daily_recipe:2026-11-05');
+  begin
+    insert into public.publishing_jobs (job_type, job_date, idempotency_key) values ('daily_recipe', '2026-11-05', 'daily_recipe:2026-11-05:again');
+    raise exception 'two daily jobs on one date';
+  exception when unique_violation then null;
+  end;
+end $$;
+
 select 'All Phase 2 automation checks passed' as result;
 
 rollback;

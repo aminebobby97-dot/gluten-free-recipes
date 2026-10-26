@@ -134,6 +134,13 @@ alter table public.publishing_jobs
   add column cost_usd numeric(10, 4) not null default 0 check (cost_usd >= 0),
   add column lease_expires_at timestamptz;
 
+-- Dry runs (manual test generations that never save a recipe) may run several
+-- times a day; real publishing jobs stay limited to one per type per day.
+alter table public.publishing_jobs drop constraint publishing_jobs_one_per_day;
+create unique index publishing_jobs_one_per_day
+  on public.publishing_jobs (job_type, job_date)
+  where job_type <> 'dry_run';
+
 -- ---------------------------------------------------------------------------
 -- Job event log (append-only).
 -- ---------------------------------------------------------------------------
