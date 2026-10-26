@@ -1,0 +1,58 @@
+# Daily recipe worker. Generates one recipe with photos, checks it, and saves
+# it for review (or publishes it, once auto mode is approved).
+#
+# For now it only runs when started by hand (Actions -> Daily recipe -> Run
+# workflow). The daily schedule stays commented out until James approves
+# activation; even then, nothing runs unless the AUTOMATION_ENABLED variable is
+# "true" AND automation is switched on in the admin dashboard. Dry runs work
+# while automation is off and never save a recipe.
+
+name: Daily recipe
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry_run: test without saving a recipe. review: save a draft for approval. auto: publish (only after 5 approved recipes)."
+        type: choice
+        options: [dry_run, review, auto]
+        default: dry_run
+      keyword:
+        description: "Dry runs only: a keyword to try instead of the next one in the queue (optional)."
+        type: string
+        required: false
+  # schedule:
+  #   - cron: "17 13 * * *" # 13:17 UTC every day. Uncomment only after activation is approved.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-recipe
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: automation
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generate the recipe
+        run: npm run automation:run
+        env:
+          RUN_MODE: ${{ github.event_name == 'schedule' && 'auto' || inputs.mode }}
+          RUN_TRIGGER: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}
+          DRY_RUN_KEYWORD: ${{ inputs.keyword }}
+          AUTOMATION_ENABLED: ${{ vars.AUTOMATION_ENABLED || 'false' }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
