@@ -6,12 +6,32 @@
 --   * publishing_job_events    append-only step log for every job
 --   * generation_attempts      every AI call (recipe, review, image, image check) with tokens and cost
 --   * recipes / keywords / publishing_jobs / pinterest_posts: new columns
---   * RPCs (service_role only): claim_next_keyword (replaced), release_keyword,
---     find_similar_recipes, publish_generated_recipe
+--   * RPCs: claim_next_keyword (replaced), release_keyword, find_similar_keywords,
+--     find_similar_recipes, ai_spend, publish_generated_recipe
 --
 -- Everything is additive: existing rows, policies and app behaviour are unchanged.
 
 create extension if not exists pg_trgm with schema extensions;
+
+-- keyword_core(text): what a keyword or title is actually about, for duplicate
+-- checks. Drops words every keyword on this site shares ("gluten free",
+-- "recipe", "easy"...), which otherwise make unrelated keywords look alike:
+-- "gluten free zucchini bread" -> "zucchini bread".
+create or replace function public.keyword_core(p_text text)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select btrim(regexp_replace(
+    regexp_replace(
+      lower(regexp_replace(coalesce(p_text, ''), '[^[:alnum:]]+', ' ', 'g')),
+      '\m(gluten|free|gf|celiac|recipes?|easy|best|simple|quick|homemade|ultimate|perfect|the|a|an|and|with|how|to|make|for)\M', ' ', 'g'),
+    '\s+', ' ', 'g'));
+$$;
+
+grant execute on function public.keyword_core(text) to anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- Settings: one row. Automation stays off until an admin turns it on.
@@ -23,6 +43,14 @@ create table public.automation_settings (
   -- auto:   the job publishes the recipe itself.
   publish_mode text not null default 'review' check (publish_mode in ('review', 'auto')),
   max_recipes_per_day integer not null default 1 check (max_recipes_per_day between 0 and 5),
+  -- Auto mode is refused until this many AI recipes were approved by a person.
+  min_reviewed_before_auto integer not null default 5 check (min_reviewed_before_auto between 0 and 100),
+  -- Hard cap on AI spend per UTC day, across all jobs. Checked before every AI call.
+  daily_budget_usd numeric(8, 2) not null default 3.00 check (daily_budget_usd between 0 and 100),
+  -- Keywords harder than this (0 to 100, from the import's data source) are skipped.
+  max_keyword_difficulty numeric(5, 2) not null default 40 check (max_keyword_difficulty between 0 and 100),
+  -- Trigram similarity (0 to 1) above which a keyword or title counts as a duplicate.
+  similarity_threshold real not null default 0.5 check (similarity_threshold between 0.2 and 0.95),
   pinterest_enabled boolean not null default false,
   updated_at timestamptz not null default now(),
   updated_by uuid references auth.users (id) on delete set null
@@ -40,10 +68,15 @@ for each row execute function public.set_updated_at();
 alter table public.recipes
   add column source text not null default 'manual' check (source in ('manual', 'ai')),
   add column image_source text check (image_source is null or image_source in ('upload', 'ai')),
-  add column generation_job_id uuid references public.publishing_jobs (id) on delete set null;
+  add column generation_job_id uuid references public.publishing_jobs (id) on delete set null,
+  -- Major US food allergens the recipe contains (FDA's nine minus wheat, which a
+  -- gluten-free recipe never contains). Empty array = none of them.
+  add column allergens text[] not null default '{}'
+    check (allergens <@ array['milk', 'eggs', 'fish', 'shellfish', 'tree_nuts', 'peanuts', 'soy', 'sesame']::text[]);
 
--- Near-duplicate title detection.
-create index recipes_title_trgm_idx on public.recipes using gin (lower(title) extensions.gin_trgm_ops);
+-- Near-duplicate title and focus keyword detection.
+create index recipes_title_core_trgm_idx on public.recipes using gin (public.keyword_core(title) extensions.gin_trgm_ops);
+create index recipes_focus_keyword_core_trgm_idx on public.recipes using gin (public.keyword_core(focus_keyword) extensions.gin_trgm_ops);
 
 -- Note: the worker always writes is_tested = false. An admin who actually cooks
 -- an AI recipe can still tick it, so this is enforced in code, not here.
@@ -76,10 +109,17 @@ execute function public.mark_recipe_keyword_used();
 alter table public.keywords
   add column priority integer not null default 0 check (priority between -100 and 100),
   add column attempt_count integer not null default 0 check (attempt_count >= 0),
-  add column last_error text;
+  add column last_error text,
+  -- Demand per unit of difficulty. Null when the import had no search volume.
+  -- Unknown difficulty counts as 50 (medium) so it never outranks a known easy keyword.
+  add column opportunity_score numeric generated always as (
+    case when search_volume is null then null
+         else round(search_volume::numeric / (10 + coalesce(keyword_difficulty, 50)), 3) end
+  ) stored;
 
 drop index if exists public.keywords_status_idx;
-create index keywords_claim_idx on public.keywords (status, priority desc, created_at);
+create index keywords_claim_idx on public.keywords (status, priority desc, opportunity_score desc nulls last, created_at);
+create index keywords_core_trgm_idx on public.keywords using gin (public.keyword_core(keyword) extensions.gin_trgm_ops);
 
 -- ---------------------------------------------------------------------------
 -- Publishing jobs: checkpoints so a retry resumes instead of starting over.
@@ -173,8 +213,48 @@ create policy "generation_attempts: admin read"
   using ((select public.is_admin()));
 
 -- ---------------------------------------------------------------------------
--- claim_next_keyword(job_id): replaces the Phase 1 version. Highest priority
--- first, then oldest. Skips keywords that failed three times.
+-- find_similar_keywords(keyword): keywords already used, assigned or in
+-- progress, and recipes whose focus keyword or title, are close enough to
+-- compete with it in search (keyword cannibalization).
+-- ---------------------------------------------------------------------------
+create or replace function public.find_similar_keywords(p_keyword text, p_threshold real default 0.5, p_exclude_id uuid default null)
+returns table (kind text, id uuid, text text, similarity real)
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  with q as (select public.keyword_core(p_keyword) as k)
+  select * from (
+    select 'keyword'::text, kw.id, kw.keyword, extensions.similarity(public.keyword_core(kw.keyword), q.k)
+    from public.keywords kw, q
+    where kw.status in ('queued', 'assigned', 'used')
+      and kw.id is distinct from p_exclude_id
+      and extensions.similarity(public.keyword_core(kw.keyword), q.k) >= p_threshold
+    union all
+    select 'recipe_keyword', r.id, r.focus_keyword, extensions.similarity(public.keyword_core(r.focus_keyword), q.k)
+    from public.recipes r, q
+    where r.focus_keyword is not null
+      and extensions.similarity(public.keyword_core(r.focus_keyword), q.k) >= p_threshold
+    union all
+    select 'recipe_title', r.id, r.title, extensions.similarity(public.keyword_core(r.title), q.k)
+    from public.recipes r, q
+    where extensions.similarity(public.keyword_core(r.title), q.k) >= p_threshold
+  ) s (kind, id, text, similarity)
+  order by similarity desc
+  limit 10;
+$$;
+
+revoke all on function public.find_similar_keywords(text, real, uuid) from public, anon;
+grant execute on function public.find_similar_keywords(text, real, uuid) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- claim_next_keyword(job_id): replaces the Phase 1 version.
+--   * order: manual priority, then opportunity (volume per difficulty), then oldest
+--   * skips keywords harder than automation_settings.max_keyword_difficulty
+--   * skips keywords that failed three times
+--   * rejects (and skips) keywords too similar to one already covered, so two
+--     articles never compete for the same search
 -- ---------------------------------------------------------------------------
 create or replace function public.claim_next_keyword(p_job_id uuid)
 returns public.keywords
@@ -184,18 +264,44 @@ security invoker
 set search_path = ''
 as $$
 declare
+  v_settings public.automation_settings;
   v_keyword public.keywords;
+  v_clash record;
+  v_checked integer := 0;
 begin
-  select * into v_keyword
-  from public.keywords
-  where status = 'new' and assigned_recipe_id is null and attempt_count < 3
-  order by priority desc, created_at
-  for update skip locked
-  limit 1;
+  select * into v_settings from public.automation_settings where id;
 
-  if v_keyword.id is null then
-    return null;
-  end if;
+  loop
+    select * into v_keyword
+    from public.keywords
+    where status = 'new'
+      and assigned_recipe_id is null
+      and attempt_count < 3
+      and (keyword_difficulty is null or keyword_difficulty <= v_settings.max_keyword_difficulty)
+    order by priority desc, opportunity_score desc nulls last, created_at
+    for update skip locked
+    limit 1;
+
+    if v_keyword.id is null then
+      return null;
+    end if;
+
+    select * into v_clash
+    from public.find_similar_keywords(v_keyword.keyword, v_settings.similarity_threshold, v_keyword.id)
+    limit 1;
+
+    exit when v_clash.id is null;
+
+    update public.keywords
+    set status = 'rejected',
+        last_error = left(format('Too similar to %s "%s" (similarity %s)', replace(v_clash.kind, '_', ' '), v_clash.text, round(v_clash.similarity::numeric, 2)), 2000)
+    where id = v_keyword.id;
+
+    v_checked := v_checked + 1;
+    if v_checked >= 50 then
+      return null;
+    end if;
+  end loop;
 
   update public.keywords
   set status = 'queued', attempt_count = attempt_count + 1, last_error = null
@@ -233,9 +339,10 @@ grant execute on function public.release_keyword(uuid, text) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- find_similar_recipes(title, focus_keyword): duplicate check across ALL
--- recipes (drafts included) by trigram title similarity or equal keyword.
+-- recipes (drafts included) by trigram similarity of the core of the title or
+-- focus keyword (see keyword_core).
 -- ---------------------------------------------------------------------------
-create or replace function public.find_similar_recipes(p_title text, p_focus_keyword text default null, p_threshold real default 0.55)
+create or replace function public.find_similar_recipes(p_title text, p_focus_keyword text default null, p_threshold real default 0.5)
 returns table (id uuid, title text, slug text, status public.recipe_status, similarity real)
 language sql
 stable
@@ -243,11 +350,14 @@ security invoker
 set search_path = ''
 as $$
   select r.id, r.title, r.slug, r.status,
-         extensions.similarity(lower(r.title), lower(p_title)) as similarity
+         greatest(
+           extensions.similarity(public.keyword_core(r.title), public.keyword_core(p_title)),
+           coalesce(extensions.similarity(public.keyword_core(r.focus_keyword), public.keyword_core(p_focus_keyword)), 0)
+         ) as similarity
   from public.recipes r
-  where extensions.similarity(lower(r.title), lower(p_title)) >= p_threshold
-     or (p_focus_keyword is not null
-         and lower(btrim(r.focus_keyword)) = lower(btrim(p_focus_keyword)))
+  where extensions.similarity(public.keyword_core(r.title), public.keyword_core(p_title)) >= p_threshold
+     or (p_focus_keyword is not null and r.focus_keyword is not null
+         and extensions.similarity(public.keyword_core(r.focus_keyword), public.keyword_core(p_focus_keyword)) >= p_threshold)
   order by similarity desc
   limit 10;
 $$;
@@ -256,10 +366,29 @@ revoke all on function public.find_similar_recipes(text, text, real) from public
 grant execute on function public.find_similar_recipes(text, text, real) to service_role;
 
 -- ---------------------------------------------------------------------------
+-- ai_spend(since): AI cost recorded since a moment (default: start of the UTC
+-- day). The worker compares it with automation_settings.daily_budget_usd before
+-- every AI call; admins see it on the dashboard.
+-- ---------------------------------------------------------------------------
+create or replace function public.ai_spend(p_since timestamptz default date_trunc('day', now() at time zone 'utc') at time zone 'utc')
+returns numeric
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select coalesce(sum(cost_usd), 0) from public.generation_attempts where created_at >= p_since;
+$$;
+
+revoke all on function public.ai_spend(timestamptz) from public, anon;
+grant execute on function public.ai_spend(timestamptz) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
 -- publish_generated_recipe(job_id): the only way the worker makes a recipe
 -- public. In one transaction it publishes the job's recipe, marks the keyword
--- used and completes the job. If any part fails, nothing changes. The
--- recipes_published_complete check constraint still applies.
+-- used and completes the job. If any part fails, nothing changes. Refused
+-- while automation is off, in review mode, or before enough AI recipes were
+-- approved by a person. The recipes_published_complete check still applies.
 -- ---------------------------------------------------------------------------
 create or replace function public.publish_generated_recipe(p_job_id uuid)
 returns public.recipes
@@ -269,9 +398,23 @@ security invoker
 set search_path = ''
 as $$
 declare
+  v_settings public.automation_settings;
   v_job public.publishing_jobs;
   v_recipe public.recipes;
+  v_reviewed integer;
 begin
+  select * into v_settings from public.automation_settings where id;
+  if not v_settings.enabled or v_settings.publish_mode <> 'auto' then
+    raise exception 'automatic publishing is turned off';
+  end if;
+
+  select count(*) into v_reviewed
+  from public.recipes
+  where source = 'ai' and status = 'published';
+  if v_reviewed < v_settings.min_reviewed_before_auto then
+    raise exception 'only % of % required AI recipes have been approved by a person', v_reviewed, v_settings.min_reviewed_before_auto;
+  end if;
+
   select * into v_job from public.publishing_jobs where id = p_job_id for update;
   if v_job.id is null then
     raise exception 'publishing job % not found', p_job_id;
@@ -291,11 +434,12 @@ begin
   where id = v_job.recipe_id
     and source = 'ai'
     and generation_job_id = p_job_id
+    and is_tested = false
     and status in ('draft', 'in_review')
   returning * into v_recipe;
 
   if v_recipe.id is null then
-    raise exception 'recipe % is not an unpublished AI recipe of job %', v_job.recipe_id, p_job_id;
+    raise exception 'recipe % is not an unpublished, untested AI recipe of job %', v_job.recipe_id, p_job_id;
   end if;
 
   update public.keywords
