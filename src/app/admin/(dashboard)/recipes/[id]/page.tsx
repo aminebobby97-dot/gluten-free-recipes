@@ -6,6 +6,7 @@ import { RecipeForm } from "@/components/admin/recipe-form";
 import { SubmitButton } from "@/components/admin/submit-button";
 import { IssueList, Notice, PageHeader, Panel, StatusBadge, formatDateTime } from "@/components/admin/ui";
 import { requireAdmin } from "@/lib/auth/admin";
+import { ALLERGEN_LABELS, type Allergen } from "@/lib/automation/allergens";
 import { listCategories } from "@/lib/data/admin";
 import { analyzeIngredients } from "@/lib/recipes/gluten";
 import { getPublishReadiness } from "@/lib/recipes/validation";
@@ -82,6 +83,29 @@ export default async function EditRecipePage({ params, searchParams }: PageProps
               )}
             </div>
           </Panel>
+
+          {recipe.source === "ai" && (
+            <Panel title="AI-written recipe">
+              <p className="text-sm text-ink-soft">
+                This recipe passed the automated gluten, allergen, consistency and SEO checks and an independent AI review. Before publishing, read it as a cook would:
+              </p>
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-ink-soft">
+                <li>Do the quantities make sense for the servings?</li>
+                <li>Are the times and temperatures realistic?</li>
+                <li>Is every gluten-risk ingredient marked as gluten-free?</li>
+                <li>Does the photo look like the recipe?</li>
+              </ul>
+              <p className="mt-3 text-sm">
+                <span className="text-ink-soft">Declared allergens: </span>
+                <span className="font-medium text-ink">{recipe.allergens?.length ? recipe.allergens.map((a) => ALLERGEN_LABELS[a as Allergen] ?? a).join(", ") : "none"}</span>
+              </p>
+              {recipe.generation_job_id && (
+                <Link href={`/admin/jobs/${recipe.generation_job_id}`} className="mt-3 inline-block text-sm text-sage-dark hover:underline">
+                  See how it was generated and what it cost
+                </Link>
+              )}
+            </Panel>
+          )}
 
           <Panel title={readiness.ready ? "Ready to publish" : `${readiness.errors.length} blocking issue(s)`}>
             {readiness.ready ? <p className="text-sm text-sage-dark">All required fields are complete and the gluten checks passed.</p> : <IssueList issues={readiness.errors} />}

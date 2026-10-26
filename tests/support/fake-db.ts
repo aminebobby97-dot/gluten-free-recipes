@@ -1,6 +1,6 @@
 // Minimal in-memory stand-in for the parts of the Supabase query builder used
 // by the publishing services. Supports eq/neq filters, insert, update, upsert
-// (with ignoreDuplicates) and single/maybeSingle.
+// (with ignoreDuplicates), single/maybeSingle and head-only counts.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -18,6 +18,7 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
     let payload: Row | Row[] | undefined;
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
     const filters: Array<(r: Row) => boolean> = [];
+    let countOnly = false;
 
     const run = () => {
       const rows = data[table];
@@ -42,7 +43,7 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
     };
 
     const builder = {
-      select: () => builder,
+      select: (_cols?: string, opts?: { count?: string; head?: boolean }) => ((countOnly = Boolean(opts?.head)), builder),
       insert: (p: Row | Row[]) => ((op = "insert"), (payload = p), calls.push({ table, op, payload: p }), builder),
       upsert: (p: Row | Row[], o: typeof upsertOpts = {}) => ((op = "upsert"), (payload = p), (upsertOpts = o), calls.push({ table, op, payload: p }), builder),
       update: (p: Row) => ((op = "update"), (payload = p), calls.push({ table, op, payload: p }), builder),
@@ -58,7 +59,10 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
         return rows.length === 1 ? { data: rows[0], error: null } : { data: null, error: { message: `expected 1 row, got ${rows.length}` } };
       },
       maybeSingle: async () => ({ data: run()[0] ?? null, error: null }),
-      then: (resolve: (v: { data: Row[]; error: null }) => unknown) => resolve({ data: run(), error: null }),
+      then: (resolve: (v: { data: Row[] | null; error: null; count?: number }) => unknown) => {
+        const rows = run();
+        return resolve(countOnly ? { data: null, error: null, count: rows.length } : { data: rows, error: null });
+      },
     };
     return builder;
   }

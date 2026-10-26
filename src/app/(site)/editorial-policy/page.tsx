@@ -18,8 +18,25 @@ export default function EditorialPolicyPage() {
       <h2>How recipes are created</h2>
       <p>
         Recipes are based on established gluten-free cooking and baking techniques. Some are drafted with the help of
-        software, including AI writing tools. Every recipe is reviewed by a person before it is published, with particular
-        attention to ingredients, measurements, temperatures and food-safety steps.
+        software, including AI writing tools.
+      </p>
+      <p>
+        Before an AI-drafted recipe can be published, it must pass automated checks for gluten-containing ingredients,
+        cross-contact risks, allergens, food-safety temperatures, and agreement between the ingredient list, the steps and
+        the cooking times. A second, independent AI model then reviews it as an editor would. A recipe that fails any check
+        is not published. A person reviews AI-drafted recipes, with particular attention to ingredients, measurements,
+        temperatures and food-safety steps.
+      </p>
+      <h2>Photos</h2>
+      <p>
+        Some recipe photos are generated with AI to show what the finished dish looks like. These are labeled{" "}
+        <em>AI-generated image</em> below the photo. They are checked to make sure they show the recipe and no
+        gluten-containing foods that are not part of it, but your result may look different.
+      </p>
+      <h2>Allergens</h2>
+      <p>
+        Where a recipe lists the major food allergens it contains, that list is based on the ingredients as written. Brands
+        differ, so always check the labels of the products you use.
       </p>
       <h2>Testing labels</h2>
       <p>

@@ -4,6 +4,7 @@
 // caller is an admin; the database enforces the same rule through RLS.
 
 import { redirect } from "next/navigation";
+import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth/admin";
 import { recipeFromForm, text, nullableText, intOrNull } from "@/lib/admin/form";
@@ -200,4 +201,35 @@ export async function updateKeywordStatusAction(_prev: ActionState, form: FormDa
   if (error) return failure(dbError("Update keyword", error));
   revalidatePath("/admin/keywords");
   return { ok: true, message: "Keyword updated." };
+}
+
+// ---------------------------------------------------------------------------
+// Automation settings
+// ---------------------------------------------------------------------------
+
+const automationSettingsSchema = z.object({
+  enabled: z.boolean(),
+  publish_mode: z.enum(["review", "auto"]),
+  daily_budget_usd: z.number().min(0.5, "The daily budget must be at least $0.50.").max(100, "The daily budget can be at most $100."),
+  max_keyword_difficulty: z.number().min(0).max(100, "Keyword difficulty is between 0 and 100."),
+});
+
+export async function saveAutomationSettingsAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase, user } = await requireAdmin();
+  const parsed = automationSettingsSchema.safeParse({
+    enabled: form.get("enabled") === "on",
+    publish_mode: text(form, "publish_mode"),
+    daily_budget_usd: Number(text(form, "daily_budget_usd")),
+    max_keyword_difficulty: Number(text(form, "max_keyword_difficulty")),
+  });
+  if (!parsed.success) {
+    return { ok: false, message: "Check the highlighted settings.", issues: parsed.error.issues.map((i) => ({ field: i.path.join("."), message: i.message })) };
+  }
+  const { error } = await supabase
+    .from("automation_settings")
+    .update({ ...parsed.data, updated_at: new Date().toISOString(), updated_by: user.id })
+    .eq("id", true);
+  if (error) return failure(dbError("Save automation settings", error));
+  revalidatePath("/admin/automation");
+  return { ok: true, message: "Automation settings saved." };
 }

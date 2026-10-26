@@ -8,7 +8,11 @@ export function JobsTable({ jobs, empty }: { jobs: AdminJobRow[]; empty: string 
     <Table head={["Date", "Type", "Status", "Step", "Keyword", "Recipe", "Retries", "Error"]}>
       {jobs.map((j) => (
         <tr key={j.id} className="align-top">
-          <td className="whitespace-nowrap px-4 py-3 font-medium text-ink">{j.job_date}</td>
+          <td className="whitespace-nowrap px-4 py-3 font-medium">
+            <Link href={`/admin/jobs/${j.id}`} className="text-sage-dark hover:underline">
+              {j.job_date}
+            </Link>
+          </td>
           <td className="px-4 py-3 text-ink-soft">{j.job_type}</td>
           <td className="px-4 py-3">
             <StatusBadge status={j.status} />

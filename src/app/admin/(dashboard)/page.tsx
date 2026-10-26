@@ -2,16 +2,17 @@ import Link from "next/link";
 import { PageHeader, Panel, StatusBadge, formatDateTime } from "@/components/admin/ui";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getDashboardStats, listRecipes } from "@/lib/data/admin";
-import { isAutomationEnabled } from "@/lib/services/automation";
+import { getAutomationOverview } from "@/lib/data/automation";
 
 export const metadata = { title: "Overview" };
 
 export default async function AdminOverviewPage() {
   const { supabase } = await requireAdmin();
-  const [stats, recent] = await Promise.all([getDashboardStats(supabase), listRecipes(supabase)]);
+  const [stats, recent, automation] = await Promise.all([getDashboardStats(supabase), listRecipes(supabase), getAutomationOverview(supabase)]);
   const cards = [
     { label: "Published recipes", value: stats.published, href: "/admin/recipes?status=published" },
-    { label: "Drafts", value: stats.draft + stats.inReview, href: "/admin/recipes?status=draft" },
+    { label: "Drafts", value: stats.draft, href: "/admin/recipes?status=draft" },
+    { label: "Waiting for review", value: stats.inReview, href: "/admin/recipes?status=in_review" },
     { label: "Unused keywords", value: stats.keywordsNew, href: "/admin/keywords?status=new" },
     { label: "Errors", value: stats.jobsFailed + stats.pinsFailed, href: "/admin/errors" },
   ];
@@ -19,14 +20,14 @@ export default async function AdminOverviewPage() {
     <div className="space-y-8">
       <PageHeader
         title="Overview"
-        description="Manage recipes, categories and keywords. Automated publishing is not active in this phase."
+        description="Manage recipes, categories and keywords. AI recipes wait for your review before they go live."
         actions={
           <Link href="/admin/recipes/new" className="btn btn-primary">
             New recipe
           </Link>
         }
       />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {cards.map((c) => (
           <Link key={c.label} href={c.href} className="rounded-2xl border border-line bg-card p-5 transition-shadow hover:shadow-card">
             <p className="text-sm text-ink-soft">{c.label}</p>
@@ -53,16 +54,20 @@ export default async function AdminOverviewPage() {
         <Panel title="Automation">
           <dl className="space-y-3 text-sm">
             <div className="flex justify-between">
-              <dt className="text-ink-soft">Daily publishing</dt>
-              <dd className="font-semibold text-ink">{isAutomationEnabled() ? "Enabled by env flag (no scheduler exists)" : "Off"}</dd>
+              <dt className="text-ink-soft">Daily AI recipes</dt>
+              <dd className="font-semibold text-ink">
+                {!automation.installed ? "Not installed" : automation.settings.enabled ? (automation.settings.publish_mode === "auto" ? "On, automatic" : "On, review") : "Off"}
+              </dd>
             </div>
-            <div className="flex justify-between">
-              <dt className="text-ink-soft">AI recipe generation</dt>
-              <dd className="font-semibold text-ink">Not built yet</dd>
-            </div>
+            {automation.installed && (
+              <div className="flex justify-between">
+                <dt className="text-ink-soft">AI spend today</dt>
+                <dd className="font-semibold text-ink">${automation.spentTodayUsd.toFixed(2)}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-ink-soft">Pinterest publishing</dt>
-              <dd className="font-semibold text-ink">Not built yet</dd>
+              <dd className="font-semibold text-ink">Off</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-ink-soft">Pins waiting</dt>
