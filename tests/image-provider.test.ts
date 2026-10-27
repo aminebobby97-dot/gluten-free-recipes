@@ -91,10 +91,16 @@ describe("site refresher", () => {
 
     await site.revalidate("gluten-free-blueberry-muffins");
     expect(seen[0][0]).toBe("https://example.com/api/internal/revalidate");
-    expect(seen[0][1]).toMatchObject({ method: "POST", body: JSON.stringify({ slug: "gluten-free-blueberry-muffins" }) });
+    expect(seen[0][1]).toMatchObject({ method: "POST", redirect: "manual", body: JSON.stringify({ slug: "gluten-free-blueberry-muffins" }) });
     expect((seen[0][1]!.headers as Record<string, string>).authorization).toBe(`Bearer ${"s".repeat(40)}`);
 
     status = 401;
     await expect(site.revalidate("x")).rejects.toThrow(/HTTP 401/);
+  });
+
+  it("refuses to follow a redirect, which would drop the secret", async () => {
+    const fakeFetch = (async () => new Response(null, { status: 308, headers: { location: "https://www.glutenfreerecipehub.com/api/internal/revalidate" } })) as typeof fetch;
+    const site = createSiteRefresher("https://gluten-free-recipes.vercel.app", "s".repeat(40), fakeFetch);
+    await expect(site.revalidate("x")).rejects.toThrow(/redirected \(HTTP 308 to https:\/\/www\.glutenfreerecipehub\.com/);
   });
 });
