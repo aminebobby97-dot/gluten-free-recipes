@@ -30,7 +30,14 @@ export function createSiteRefresher(siteUrl: string, secret: string, fetchImpl: 
         headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
         body: JSON.stringify({ slug }),
         signal: AbortSignal.timeout(15_000),
+        // A redirect (for example from an old domain) would drop the secret and
+        // fail with a confusing 401, so report it instead of following it.
+        redirect: "manual",
       });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        throw new Error(`Site refresh was redirected (HTTP ${response.status}${location ? ` to ${location}` : ""}). Set SITE_URL to the site's primary domain.`);
+      }
       if (!response.ok) throw new Error(`Site refresh failed with HTTP ${response.status}.`);
     },
   };

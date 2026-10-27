@@ -32,7 +32,7 @@ Copy `.env.example` to `.env.local` for local development. In Vercel, add the sa
 
 | Variable | Required | Where to find it |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SITE_URL` | Yes | Your production URL, e.g. `https://www.yourdomain.com` (no trailing slash) |
+| `NEXT_PUBLIC_SITE_URL` | Yes | Your production URL: `https://www.glutenfreerecipehub.com` (no trailing slash). Set it for Production only |
 | `NEXT_PUBLIC_SITE_NAME` | Recommended | Brand name. Defaults to "Crumb & Clover" |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase → Project Settings → API → Project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes | Supabase → Project Settings → API Keys → publishable key (or set `NEXT_PUBLIC_SUPABASE_ANON_KEY` with the legacy anon key) |
@@ -47,9 +47,9 @@ The publishable key is safe in the browser because Row Level Security only lets 
 1. Push the repository to GitHub and import it in Vercel (framework preset: Next.js; Node.js 20.9 or newer).
 2. Add the environment variables above for **Production** (and Preview if you want previews to show data).
 3. Deploy. The build reads published recipes from Supabase to prerender pages, so Supabase must be reachable during the build.
-4. Add your custom domain, then make sure `NEXT_PUBLIC_SITE_URL` matches it exactly and redeploy.
+4. Add your custom domain, then make sure `NEXT_PUBLIC_SITE_URL` matches it exactly and redeploy. See [CUSTOM-DOMAIN.md](CUSTOM-DOMAIN.md).
 5. In Supabase → **Authentication → URL Configuration**, set the Site URL to your production URL.
-6. Submit `https://yourdomain.com/sitemap.xml` in Google Search Console.
+6. Submit `https://www.glutenfreerecipehub.com/sitemap.xml` in Google Search Console.
 
 Preview deployments automatically serve a `robots.txt` that disallows crawling.
 

@@ -91,7 +91,7 @@ GitHub keeps these encrypted and only gives them to the workflow. They never app
    | Name | Value |
    | --- | --- |
    | `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
-   | `SITE_URL` | Your live site, for example `https://www.yourdomain.com` (no trailing slash) |
+   | `SITE_URL` | `https://www.glutenfreerecipehub.com` (no trailing slash, not the old `vercel.app` address) |
    | `AUTOMATION_ENABLED` | `false` |
 
 ## Step 6: Apply the database migration (done)

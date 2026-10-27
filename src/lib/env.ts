@@ -1,10 +1,26 @@
 // Central access to environment variables. Public values are safe for the
 // browser; everything else must only be read on the server.
 
+/** The site's primary domain. Used in production when NEXT_PUBLIC_SITE_URL is not set. */
+export const PRIMARY_SITE_URL = "https://www.glutenfreerecipehub.com";
+
+/**
+ * The canonical site URL, without a trailing slash. NEXT_PUBLIC_SITE_URL wins;
+ * otherwise Vercel production builds use the primary domain and everything else
+ * (local development, previews) uses localhost, so canonicals never point at a
+ * preview or Vercel-generated address by accident.
+ */
+export function resolveSiteUrl(env: Record<string, string | undefined> = process.env): string {
+  const configured = env.NEXT_PUBLIC_SITE_URL?.trim();
+  const isProduction = (env.VERCEL_ENV || env.NEXT_PUBLIC_VERCEL_ENV) === "production";
+  const url = configured || (isProduction ? PRIMARY_SITE_URL : "http://localhost:3000");
+  return url.replace(/\/+$/, "");
+}
+
 export const siteConfig = {
   name: process.env.NEXT_PUBLIC_SITE_NAME?.trim() || "Crumb & Clover",
   tagline: "Gluten-free recipes made simple",
-  url: (process.env.NEXT_PUBLIC_SITE_URL?.trim() || "http://localhost:3000").replace(/\/+$/, ""),
+  url: resolveSiteUrl(),
   locale: "en_US",
   contactEmail: process.env.NEXT_PUBLIC_CONTACT_EMAIL?.trim() || "",
   pinterestHandle: process.env.NEXT_PUBLIC_PINTEREST_HANDLE?.trim() || "",
