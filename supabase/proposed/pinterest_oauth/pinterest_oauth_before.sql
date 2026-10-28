@@ -1,4 +1,4 @@
--- Pinterest OAuth migration: run BEFORE the migration. Read-only, changes nothing.
+-- Pinterest OAuth migration: run BEFORE the migration. Read-only (SELECT only), changes nothing.
 -- Write down the numbers. "connection_table_exists" should be false the first time.
 select
   (select count(*) from public.recipes where status = 'published') as published_recipes,

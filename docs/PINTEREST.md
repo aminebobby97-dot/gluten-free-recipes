@@ -98,10 +98,22 @@ Do these in order. **Never paste your App secret or the encryption key into a ch
 
 This adds the table that holds the (encrypted) Pinterest connection. It only adds things: no recipes, Pins or security rules change.
 
+The three files are in the repository folder `supabase/proposed/pinterest_oauth/`:
+
+| Order | File | What it does |
+| --- | --- | --- |
+| 1 | `supabase/proposed/pinterest_oauth/pinterest_oauth_before.sql` | Read-only check (SELECT only). Changes nothing. |
+| 2 | `supabase/proposed/pinterest_oauth/pinterest_oauth_migration_sql_editor.sql` | The database update, in one transaction (all or nothing). |
+| 3 | `supabase/proposed/pinterest_oauth/pinterest_oauth_verify.sql` | Read-only check (SELECT only). Changes nothing. |
+
+To open one on GitHub: go to the repository, open the `supabase` folder, then `proposed`, then `pinterest_oauth`, click the file, and use the **Copy raw file** button (two overlapping squares, top right of the file).
+
 1. Open [supabase.com](https://supabase.com), open your project, and click **SQL Editor** in the left menu.
-2. Click **New query**. Paste all of `supabase/proposed/pinterest_oauth_checks/pinterest_oauth_before.sql` (also in the project files, `pinterest-oauth/` folder) and click **Run**. Write down the numbers.
-3. Click **New query**. Paste all of `supabase/proposed/20261028000002_pinterest_oauth.sql` (or `pinterest_oauth_migration_sql_editor.sql` from the project files, the same SQL wrapped in one transaction) and click **Run**. You should see "Success. No rows returned". It is safe to run again.
-4. Click **New query**. Paste all of `supabase/proposed/pinterest_oauth_checks/pinterest_oauth_verify.sql` and click **Run**. Every check should say **true**, and the counts should match step 2.
+2. Click **New query**. Paste all of **file 1** and click **Run**. Write down the numbers (published recipes, Pins, Ready Pins).
+3. Click **New query**. Paste all of **file 2** and click **Run**. You should see "Success. No rows returned". If you see an error, nothing was changed; copy the error and send it to Claude. It is safe to run again.
+4. Click **New query**. Paste all of **file 3** and click **Run**. Every check should say **true**, and the counts should match step 2.
+
+(`supabase/proposed/20261028000002_pinterest_oauth.sql` is the same SQL without the transaction wrapper. It is the copy that moves into `supabase/migrations/` after you have applied it; you do not need to run it separately.)
 
 #### Step 2: Find your App ID and App secret
 

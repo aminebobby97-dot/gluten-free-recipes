@@ -1,4 +1,4 @@
--- Pinterest OAuth migration: verification. Read-only, changes nothing.
+-- Pinterest OAuth migration: verification. Read-only (SELECT only), changes nothing.
 -- Every check should say true. Compare the counts with the ones from pinterest_oauth_before.sql.
 
 select 'connection table exists' as check_name,
