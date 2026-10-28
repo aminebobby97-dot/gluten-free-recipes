@@ -6,6 +6,8 @@ import { EmptyState, FilterTabs, Notice, PageHeader, StatusBadge, formatDateTime
 import { requireAdmin } from "@/lib/auth/admin";
 import { PIN_STATUSES, countPinsByStatus, listPins, type AdminPinRow } from "@/lib/data/admin";
 import { listRecipesWithoutPins } from "@/lib/services/pinterest";
+import { getPinterestConnection } from "@/lib/services/pinterest-connection";
+import { ConnectResult, PinterestConnectionPanel } from "./connection-panel";
 
 export const metadata = { title: "Pinterest" };
 
@@ -26,13 +28,16 @@ export default async function AdminPinterestPage({ searchParams }: PageProps<"/a
     );
   }
 
-  const [counts, missing] = await Promise.all([countPinsByStatus(supabase), listRecipesWithoutPins(supabase)]);
+  const [counts, missing, connection] = await Promise.all([countPinsByStatus(supabase), listRecipesWithoutPins(supabase), getPinterestConnection(supabase)]);
+  const connectResult = typeof params.connect === "string" ? params.connect : undefined;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Pinterest" description="Each published recipe gets a Pin prepared automatically: a 1000 × 1500 image made from the recipe photo, plus title, description and keywords. Review and edit them here." />
+      <ConnectResult code={connectResult} />
+      <PinterestConnectionPanel installed={connection.installed} connection={connection.installed ? connection.connection : null} />
       <Notice>
-        Publishing to Pinterest is <strong>off</strong>. Pins are prepared and stored for review only; nothing is sent to Pinterest until the official API is connected and you turn it on.
+        Automatic Pinterest publishing is <strong>off</strong>. Pins are prepared for review; a Pin is sent to Pinterest only when you open it and click <strong>Publish Pin</strong>, one at a time.
       </Notice>
 
       {missing.length > 0 && (

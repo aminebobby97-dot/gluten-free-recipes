@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { preparePinAction, savePinAction } from "@/app/admin/actions";
+import { preparePinAction, publishPinAction, savePinAction } from "@/app/admin/actions";
 import { ActionForm } from "@/components/admin/action-form";
 import { SubmitButton } from "@/components/admin/submit-button";
 import { Notice, PageHeader, Panel, StatusBadge, formatDateTime } from "@/components/admin/ui";
 import { requireAdmin } from "@/lib/auth/admin";
-import { getPin } from "@/lib/data/admin";
+import { getPin, type AdminPinDetail } from "@/lib/data/admin";
+import { getPinterestConnection, tokenHealth, type PinterestConnection } from "@/lib/services/pinterest-connection";
 import { PIN_ALT_MAX, PIN_DESCRIPTION_MAX, PIN_IMAGE_TEXT_MAX, PIN_KEYWORDS_MAX, PIN_TITLE_MAX } from "@/lib/pins/metadata";
 
 export const metadata = { title: "Pinterest Pin" };
@@ -18,6 +19,7 @@ export default async function AdminPinPage({ params }: PageProps<"/admin/pintere
   if (!UUID.test(id)) notFound();
   const pin = await getPin(supabase, id);
   if (!pin) notFound();
+  const connection = await getPinterestConnection(supabase);
   const locked = ["publishing", "published", "cancelled"].includes(pin.publication_status);
   const recipeId = pin.recipe?.id ?? "";
 
@@ -44,7 +46,11 @@ export default async function AdminPinPage({ params }: PageProps<"/admin/pintere
         <StatusBadge status={pin.publication_status} />
         <span>Prepared {formatDateTime(pin.prepared_at)}</span>
         {pin.edited_at && <span>· Edited {formatDateTime(pin.edited_at)}</span>}
-        {pin.pinterest_pin_id && <span className="font-mono text-xs">· Pinterest ID {pin.pinterest_pin_id}</span>}
+        {pin.pinterest_pin_id && (
+          <a href={`https://www.pinterest.com/pin/${encodeURIComponent(pin.pinterest_pin_id)}/`} target="_blank" rel="noreferrer" className="font-mono text-xs text-sage-dark hover:underline">
+            · View on Pinterest ({pin.pinterest_pin_id})
+          </a>
+        )}
       </div>
 
       {pin.error_message && <Notice tone="error">{pin.error_message}</Notice>}
@@ -62,6 +68,7 @@ export default async function AdminPinPage({ params }: PageProps<"/admin/pintere
               <p className="flex aspect-[2/3] items-center justify-center px-6 text-center text-sm text-ink-faint">No image yet</p>
             )}
           </div>
+          {pin.publication_status === "ready" && <PublishPanel pin={pin} connection={connection.installed ? connection.connection : null} />}
           {!locked && recipeId && (
             <div className="space-y-3">
               <ActionForm action={preparePinAction} hidden={{ recipe_id: recipeId, mode: "redraw" }}>
@@ -126,5 +133,48 @@ function Field({ label, hint, children }: { label: string; hint: string; childre
       {children}
       <span className="field-hint block">{hint}</span>
     </label>
+  );
+}
+
+function PublishPanel({ pin, connection }: { pin: AdminPinDetail; connection: PinterestConnection | null }) {
+  const blocker = !connection
+    ? "Connect Pinterest first (Pinterest page, Pinterest account)."
+    : tokenHealth(connection) === "reconnect"
+      ? "The Pinterest sign-in has expired. Click Reconnect Pinterest on the Pinterest page."
+      : !connection.selected_board_id
+        ? "Choose the board to publish to first (Pinterest page, Board)."
+        : pin.recipe?.status !== "published"
+          ? "The recipe is not published."
+          : null;
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-line bg-card p-4 text-sm">
+      <p className="font-medium text-ink">Publish to Pinterest</p>
+      {blocker ? (
+        <p className="text-ink-soft">
+          {blocker}{" "}
+          <Link href="/admin/pinterest" className="text-sage-dark underline">
+            Open Pinterest settings
+          </Link>
+        </p>
+      ) : (
+        <ActionForm action={publishPinAction} hidden={{ id: pin.id }} className="space-y-3">
+          <p className="text-ink-soft">
+            Posts this one Pin to <strong>“{connection!.selected_board_name}”</strong> as @{connection!.pinterest_username ?? "your account"}. With Trial access, only you can see it on Pinterest.
+          </p>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" name="ai_modified" value="yes" defaultChecked={pin.recipe?.image_source === "ai"} className="mt-1" />
+            <span>Label the image as made or changed with AI (Pinterest’s AI label). {pin.recipe?.image_source === "ai" ? "This recipe’s photo was generated with AI." : ""}</span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" name="confirm" value="yes" required className="mt-1" />
+            <span>I checked this Pin and want to post it to Pinterest now.</span>
+          </label>
+          <SubmitButton className="btn btn-primary w-full" pendingLabel="Publishing…">
+            Publish Pin
+          </SubmitButton>
+        </ActionForm>
+      )}
+    </div>
   );
 }

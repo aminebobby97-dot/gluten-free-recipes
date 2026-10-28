@@ -3,6 +3,7 @@
 // Server Actions for the admin dashboard. Every action re-checks that the
 // caller is an admin; the database enforces the same rule through RLS.
 
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
@@ -16,6 +17,19 @@ import { createSessionClient } from "@/lib/supabase/server";
 import { ServiceError, dbError } from "@/lib/services/errors";
 import { importKeywords, parseKeywordCsv } from "@/lib/services/keywords";
 import { createPinImageStore, prepareMissingPins, preparePin, updatePinContent, type PinPreparationDeps } from "@/lib/services/pinterest";
+import { PinterestApiError, buildAuthorizeUrl } from "@/lib/services/pinterest-api";
+import {
+  OAUTH_STATE_COOKIE,
+  OAUTH_STATE_TTL_SECONDS,
+  PINTEREST_CALLBACK_PATH,
+  createOAuthState,
+  createPinterestDeps,
+  disconnectPinterest,
+  getPinterestConfig,
+  publishPin,
+  refreshPinterestConnection,
+  selectPinterestBoard,
+} from "@/lib/services/pinterest-connection";
 import { createRecipeDraft, deleteRecipe, publishRecipe, unpublishRecipe, updateRecipe } from "@/lib/services/recipes";
 import { revalidateCategories } from "@/lib/services/revalidate";
 
@@ -27,6 +41,7 @@ export interface ActionState {
 
 function failure(error: unknown): ActionState {
   if (error instanceof ServiceError) return { ok: false, message: error.message, issues: error.issues };
+  if (error instanceof PinterestApiError) return { ok: false, message: error.message };
   console.error(error);
   return { ok: false, message: "Something went wrong. Check the server logs for details." };
 }
@@ -310,6 +325,81 @@ export async function prepareMissingPinsAction(_prev: ActionState, _form: FormDa
     ].filter(Boolean);
     return { ok: failed === 0, message: `${notes.join("; ")}.` };
   } catch (error) {
+    return failure(error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pinterest account connection (OAuth) and manual publishing of one Pin
+// ---------------------------------------------------------------------------
+
+export async function connectPinterestAction(_prev: ActionState, _form: FormData): Promise<ActionState> {
+  const { user } = await requireAdmin();
+  const config = getPinterestConfig();
+  if (!config.ok) return { ok: false, message: `Pinterest is not set up on the server yet. ${config.problems.join(" ")} See docs/PINTEREST.md.` };
+  const target = new URL(config.config.app.redirectUri);
+  // The state cookie only exists on the address the admin is using, and
+  // Pinterest sends the admin back to the registered redirect address.
+  const host = (await headers()).get("host");
+  if (host && host !== target.host) {
+    return { ok: false, message: `Open ${target.origin}/admin/pinterest and click Connect Pinterest there. Pinterest returns you to ${target.host}, so the connection has to start on that address.` };
+  }
+  const { state, cookie } = createOAuthState(config.config.stateKey, user.id);
+  (await cookies()).set(OAUTH_STATE_COOKIE, cookie, {
+    httpOnly: true,
+    secure: target.protocol === "https:",
+    sameSite: "lax",
+    path: PINTEREST_CALLBACK_PATH,
+    maxAge: OAUTH_STATE_TTL_SECONDS,
+  });
+  redirect(buildAuthorizeUrl(config.config.app, state));
+}
+
+export async function refreshPinterestAction(_prev: ActionState, _form: FormData): Promise<ActionState> {
+  const { supabase } = await requireAdmin();
+  try {
+    const connection = await refreshPinterestConnection(supabase, createPinterestDeps());
+    revalidatePath("/admin/pinterest", "layout");
+    return { ok: true, message: `Sign-in refreshed. ${connection.boards.length} board(s) found.` };
+  } catch (error) {
+    revalidatePath("/admin/pinterest", "layout");
+    return failure(error);
+  }
+}
+
+export async function selectPinterestBoardAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase } = await requireAdmin();
+  try {
+    const board = await selectPinterestBoard(supabase, text(form, "board_id"));
+    revalidatePath("/admin/pinterest", "layout");
+    return { ok: true, message: `Pins will be published to “${board.name}”.` };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function disconnectPinterestAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase } = await requireAdmin();
+  if (text(form, "confirm") !== "yes") return { ok: false, message: "Tick the box to confirm." };
+  try {
+    await disconnectPinterest(supabase);
+  } catch (error) {
+    return failure(error);
+  }
+  revalidatePath("/admin/pinterest", "layout");
+  return { ok: true, message: "Pinterest disconnected and the saved sign-in deleted. You can also remove the app under Pinterest settings, Security and logins (Apps)." };
+}
+
+/** Publishes exactly one Ready Pin, after the admin confirms. Never automatic. */
+export async function publishPinAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase, user } = await requireAdmin();
+  if (text(form, "confirm") !== "yes") return { ok: false, message: "Tick the box to confirm you want to post this Pin to Pinterest." };
+  try {
+    const result = await publishPin(supabase, text(form, "id"), user.id, { aiModified: text(form, "ai_modified") === "yes" }, createPinterestDeps());
+    revalidatePath("/admin/pinterest", "layout");
+    return { ok: true, message: `Published to “${result.boardName}” on Pinterest (Pin id ${result.pinterestPinId}). With Trial access, only you can see it.` };
+  } catch (error) {
+    revalidatePath("/admin/pinterest", "layout");
     return failure(error);
   }
 }

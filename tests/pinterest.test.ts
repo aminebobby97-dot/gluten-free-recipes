@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { pinterestSaveUrl } from "@/lib/pinterest";
 import { PIN_HEIGHT, PIN_WIDTH, renderPinImage } from "@/lib/pins/image";
 import { buildPinArtwork, buildPinDescription, buildPinKeywords, buildPinMetadata, buildPinTitle, recipeUrl, type PinRecipe } from "@/lib/pins/metadata";
-import { getPinterestPublisher, listRecipesWithoutPins, preparePin, toCreatePinRequest, updatePinContent, type PinImageStore, type PinterestPost } from "@/lib/services/pinterest";
+import { listRecipesWithoutPins, preparePin, toCreatePinRequest, updatePinContent, type PinImageStore, type PinterestPost } from "@/lib/services/pinterest";
 import { createFakeDb } from "./support/fake-db";
 
 const SITE = "https://www.glutenfreerecipehub.com";
@@ -203,11 +203,7 @@ describe("updatePinContent", () => {
 });
 
 describe("Pinterest publishing", () => {
-  it("is disabled", () => {
-    expect(() => getPinterestPublisher()).toThrow(/not enabled/);
-  });
-
-  it("maps a ready Pin to the official Create Pin request, without sending it", () => {
+  it("maps a ready Pin to the official Create Pin request", () => {
     const pin = { pin_title: "T", pin_description: "D", destination_url: `${SITE}/recipes/x`, image_url: "https://cdn.test/pin.jpg", image_alt: "Alt", publication_status: "ready" as const };
     expect(toCreatePinRequest(pin, "board-1")).toEqual({
       board_id: "board-1",
@@ -218,6 +214,7 @@ describe("Pinterest publishing", () => {
       media_source: { source_type: "image_url", url: "https://cdn.test/pin.jpg" },
     });
     expect(() => toCreatePinRequest({ ...pin, publication_status: "failed" }, "board-1")).toThrow(/ready/);
+    expect(toCreatePinRequest(pin, "board-1", { aiModified: true }).ai_disclosures).toEqual({ values: ["AI_MODIFIED"] });
   });
 
   it("builds a Save link without posting anything", () => {

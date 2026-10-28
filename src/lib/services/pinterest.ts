@@ -1,7 +1,7 @@
 // Pinterest Pin preparation. When a recipe is published, its Pin is prepared
 // (image + text) and stored in pinterest_posts as 'ready' for an admin to
-// review. Nothing is ever sent to Pinterest: there is no API client, and
-// getPinterestPublisher() throws until a later phase adds one.
+// review. Nothing here sends anything to Pinterest: posting happens only when
+// an admin clicks "Publish Pin" (see pinterest-connection.ts).
 //
 // Shared by the admin dashboard (signed-in admin's client, RLS applies) and the
 // automation worker (service-role client). Safe to call any number of times:
@@ -348,13 +348,13 @@ export async function updatePinContent(db: SupabaseClient, pinId: string, input:
 }
 
 // ---------------------------------------------------------------------------
-// Future Pinterest API integration (not active)
+// Pinterest API v5 "Create Pin" request
 // ---------------------------------------------------------------------------
 
 /**
  * The body of the official Pinterest API v5 "Create Pin" request
- * (POST https://api.pinterest.com/v5/pins). Built here so the mapping is
- * tested now; nothing sends it yet.
+ * (POST https://api.pinterest.com/v5/pins). Sent only by the admin's manual
+ * "Publish Pin" action.
  */
 export interface PinterestCreatePinRequest {
   board_id: string;
@@ -363,9 +363,15 @@ export interface PinterestCreatePinRequest {
   link: string;
   alt_text?: string;
   media_source: { source_type: "image_url"; url: string };
+  /** Pinterest's AI label: set when the photo was made or changed with AI. */
+  ai_disclosures?: { values: Array<"AI_MODIFIED"> };
 }
 
-export function toCreatePinRequest(pin: Pick<PinterestPost, "pin_title" | "pin_description" | "destination_url" | "image_url" | "image_alt" | "publication_status">, boardId: string): PinterestCreatePinRequest {
+export function toCreatePinRequest(
+  pin: Pick<PinterestPost, "pin_title" | "pin_description" | "destination_url" | "image_url" | "image_alt" | "publication_status">,
+  boardId: string,
+  options: { aiModified?: boolean } = {},
+): PinterestCreatePinRequest {
   if (pin.publication_status !== "ready") throw new ServiceError("not_ready", "Only Pins that are ready can be published.");
   if (!pin.image_url) throw new ServiceError("not_ready", "The Pin has no image.");
   if (!boardId) throw new ServiceError("invalid_input", "A Pinterest board id is required.");
@@ -376,19 +382,6 @@ export function toCreatePinRequest(pin: Pick<PinterestPost, "pin_title" | "pin_d
     link: pin.destination_url,
     ...(pin.image_alt ? { alt_text: pin.image_alt } : {}),
     media_source: { source_type: "image_url", url: pin.image_url },
+    ...(options.aiModified ? { ai_disclosures: { values: ["AI_MODIFIED" as const] } } : {}),
   };
-}
-
-/** What a real Pinterest integration must implement in a later phase. */
-export interface PinterestPublisher {
-  createPin(input: PinterestCreatePinRequest): Promise<{ id: string }>;
-}
-
-/**
- * Returns the Pinterest publisher. There deliberately is none yet: calling
- * this throws, so no code path can post to Pinterest until the official API
- * integration is built (OAuth tokens kept server-side) and explicitly turned on.
- */
-export function getPinterestPublisher(): PinterestPublisher {
-  throw new ServiceError("disabled", "Pinterest publishing is not enabled. It will be added in a later phase.");
 }

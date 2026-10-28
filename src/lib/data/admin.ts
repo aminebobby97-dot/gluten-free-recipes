@@ -155,13 +155,13 @@ export interface AdminPinDetail extends AdminPinRow {
   image_alt: string | null;
   image_path: string | null;
   board_id: string | null;
-  recipe: { id: string; title: string; slug: string; status: RecipeStatus; featured_image: string | null; pinterest_image: string | null } | null;
+  recipe: { id: string; title: string; slug: string; status: RecipeStatus; featured_image: string | null; pinterest_image: string | null; image_source: "upload" | "ai" | null } | null;
 }
 
 export async function getPin(db: SupabaseClient, id: string): Promise<AdminPinDetail | null> {
   const { data, error } = await db
     .from("pinterest_posts")
-    .select(`${PIN_COLUMNS.replace(/,recipe:.*$/, "")},image_alt,image_path,board_id,recipe:recipes(id,title,slug,status,featured_image,pinterest_image)`)
+    .select(`${PIN_COLUMNS.replace(/,recipe:.*$/, "")},image_alt,image_path,board_id,recipe:recipes(id,title,slug,status,featured_image,pinterest_image,image_source)`)
     .eq("id", id)
     .maybeSingle();
   if (notMigrated(error)) return null;
