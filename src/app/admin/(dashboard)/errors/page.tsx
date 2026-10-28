@@ -7,7 +7,7 @@ export const metadata = { title: "Errors" };
 
 export default async function AdminErrorsPage() {
   const { supabase } = await requireAdmin();
-  const [jobs, pins] = await Promise.all([listJobs(supabase, true), listPins(supabase, true)]);
+  const [jobs, pins] = await Promise.all([listJobs(supabase, true), listPins(supabase, "failed")]);
   return (
     <div className="space-y-8">
       <PageHeader title="Errors" description="Failed publishing jobs and Pinterest posts, with their error messages." />
@@ -17,7 +17,7 @@ export default async function AdminErrorsPage() {
       </section>
       <section className="space-y-3">
         <h2 className="text-xl font-medium text-ink">Failed Pinterest posts</h2>
-        <PinsTable pins={pins} empty="No failed pins." />
+        <PinsTable pins={pins ?? []} empty="No failed pins." />
       </section>
     </div>
   );

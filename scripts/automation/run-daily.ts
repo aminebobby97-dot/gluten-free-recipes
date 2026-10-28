@@ -13,6 +13,7 @@ import { runDailyRecipe, type RunMode } from "@/lib/automation/pipeline";
 import { createAnthropicProviders } from "@/lib/automation/providers/anthropic";
 import { createOpenAiPhotographer } from "@/lib/automation/providers/openai-images";
 import { createSiteRefresher, createSupabaseImageStore } from "@/lib/automation/providers/site";
+import { createPinImageStore, preparePin } from "@/lib/services/pinterest";
 
 const MODES: RunMode[] = ["dry_run", "review", "auto"];
 
@@ -66,6 +67,13 @@ async function main(): Promise<number> {
     envEnabled: process.env.AUTOMATION_ENABLED === "true",
     runUrl,
     dryRunKeyword: process.env.DRY_RUN_KEYWORD?.trim() || undefined,
+    // Pinterest Pins are only prepared for review (no AI cost, nothing posted).
+    preparePin: siteUrl
+      ? async (recipeId, jobId) => {
+          const result = await preparePin(db, recipeId, { siteUrl, store: createPinImageStore(db) }, { jobId });
+          if (result.outcome === "failed") throw new Error(result.message);
+        }
+      : undefined,
   });
 
   switch (result.status) {

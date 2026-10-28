@@ -120,7 +120,7 @@ After 5 approvals you can choose **Automatic** in Admin → Automation, and the 
 
 ## Pinterest
 
-The Pinterest image is already generated and saved with each recipe, but nothing is posted to Pinterest. Posting will be added after your Pinterest Business account and API access are ready.
+When a recipe is published (by you, or by the worker in automatic mode), its Pinterest Pin is prepared from the recipe's photo and saved as **Ready** in Admin → Pinterest for your review. This uses no AI and costs nothing. A Pin problem never stops a recipe from being published; it appears as a `prepare_pin` step in the job log. Nothing is posted to Pinterest. See [PINTEREST.md](PINTEREST.md).
 
 ## Troubleshooting
 

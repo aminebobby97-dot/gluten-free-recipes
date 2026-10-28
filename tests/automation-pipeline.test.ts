@@ -107,6 +107,28 @@ describe("runDailyRecipe: auto mode", () => {
     expect(result).toMatchObject({ status: "succeeded", published: true });
     expect(data.publishing_job_events).toContainEqual(expect.objectContaining({ step: "refresh_site", status: "failed" }));
   });
+
+  it("prepares the Pinterest Pin after publishing, and a Pin failure keeps the recipe published", async () => {
+    const reviewed = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" }));
+    const ok = automationDb({ settings: { publish_mode: "auto" }, recipes: reviewed });
+    const preparePin = vi.fn(async () => undefined);
+    expect(await run(ok.db, fakeProviders(), { requestedMode: "auto", preparePin }).result).toMatchObject({ status: "succeeded", published: true });
+    expect(preparePin).toHaveBeenCalledWith(ok.data.recipes.at(-1)?.id, expect.any(String));
+    expect(ok.data.publishing_job_events).toContainEqual(expect.objectContaining({ step: "prepare_pin", status: "succeeded" }));
+
+    const broken = automationDb({ settings: { publish_mode: "auto" }, recipes: reviewed });
+    const failing = vi.fn(async () => Promise.reject(new Error("photo download failed")));
+    expect(await run(broken.db, fakeProviders(), { requestedMode: "auto", preparePin: failing }).result).toMatchObject({ status: "succeeded", published: true });
+    expect(broken.data.recipes.at(-1)?.status).toBe("published");
+    expect(broken.data.publishing_job_events).toContainEqual(expect.objectContaining({ step: "prepare_pin", status: "failed" }));
+  });
+
+  it("does not prepare a Pin in review mode (the admin's publish does that)", async () => {
+    const { db } = automationDb();
+    const preparePin = vi.fn(async () => undefined);
+    expect(await run(db, fakeProviders(), { preparePin }).result).toMatchObject({ mode: "review", published: false });
+    expect(preparePin).not.toHaveBeenCalled();
+  });
 });
 
 describe("runDailyRecipe: failures never publish", () => {

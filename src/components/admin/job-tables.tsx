@@ -43,7 +43,9 @@ export function PinsTable({ pins, empty }: { pins: AdminPinRow[]; empty: string 
       {pins.map((p) => (
         <tr key={p.id} className="align-top">
           <td className="px-4 py-3">
-            <p className="font-medium text-ink">{p.pin_title}</p>
+            <Link href={`/admin/pinterest/${p.id}`} className="font-medium text-sage-dark hover:underline">
+              {p.pin_title}
+            </Link>
             <p className="max-w-[16rem] truncate text-xs text-ink-faint">{p.destination_url}</p>
           </td>
           <td className="px-4 py-3">

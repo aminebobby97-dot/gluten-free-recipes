@@ -25,7 +25,7 @@
 | `recipe_views` | Real view counts for "Most viewed recipes" | one row per recipe |
 | `keywords` | Imported keyword research | unique normalized keyword; volume and difficulty nullable (unknown, never estimated); `assigned_recipe_id` unique |
 | `publishing_jobs` | One row per automation run | unique `idempotency_key`; unique (`job_type`, `job_date`); a keyword can only belong to one live or successful job |
-| `pinterest_posts` | Pins and their status | unique `idempotency_key` and `pinterest_pin_id`; `published` requires a Pinterest id |
+| `pinterest_posts` | Pins prepared for review and their status (`pending`, `ready`, `published`, `failed`) | one Pin per recipe and variant; unique `idempotency_key` and `pinterest_pin_id`; `ready` requires an image; `published` requires a Pinterest id |
 | `admin_users` | Who can use `/admin` | references `auth.users` |
 
 ## Publishing services (`src/lib/services`)
@@ -35,7 +35,7 @@ These take a Supabase client as an argument, so the admin uses the signed-in use
 - `recipes.ts`: `createRecipeDraft`, `updateRecipe`, `publishRecipe` (validates completeness, gluten checks and claims; idempotent), `unpublishRecipe`, `deleteRecipe`.
 - `keywords.ts`: CSV parsing (metrics require a named data source) and de-duplicated import.
 - `jobs.ts`: `getOrCreateDailyJob` (idempotent per date), `claimJob` (optimistic lock), `recordJobStep`, `completeJob`, `failJob` (retry counting).
-- `pinterest.ts`: `buildPinDraft`, `queuePin` (idempotent). `getPinterestPublisher()` deliberately throws: there is no Pinterest API client.
+- `pinterest.ts`: `preparePin` (idempotent; called after a recipe is published, by the admin Publish action and the worker), `updatePinContent` (admin edits, Pinterest limits and claims rules), `toCreatePinRequest` (maps a Pin to the official API v5 request, not sent). `getPinterestPublisher()` deliberately throws: there is no Pinterest API client. Pin images are drawn by `src/lib/pins/image.tsx` (next/og + sharp, from the recipe's own photo) and Pin text by `src/lib/pins/metadata.ts` (no AI). See `docs/PINTEREST.md`.
 - `automation.ts`: the future eight-step daily flow (keyword → recipe → validation → photo → publish → pin image → pin → record) written against interfaces (`RecipeGenerator`, `ImageGenerator`, `PinterestPublisher`). It refuses to run unless `AUTOMATION_ENABLED=true`, and nothing in the app calls it: no route, cron or scheduled function exists.
 
 ## Before enabling automation (later phase)

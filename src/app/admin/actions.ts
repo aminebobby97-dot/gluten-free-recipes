@@ -10,10 +10,12 @@ import { requireAdmin } from "@/lib/auth/admin";
 import { recipeFromForm, text, nullableText, intOrNull } from "@/lib/admin/form";
 import { categoryInputSchema } from "@/lib/recipes/schema";
 import type { ReadinessIssue } from "@/lib/recipes/validation";
-import { isSupabaseConfigured } from "@/lib/env";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { isSupabaseConfigured, siteConfig } from "@/lib/env";
 import { createSessionClient } from "@/lib/supabase/server";
 import { ServiceError, dbError } from "@/lib/services/errors";
 import { importKeywords, parseKeywordCsv } from "@/lib/services/keywords";
+import { createPinImageStore, prepareMissingPins, preparePin, updatePinContent, type PinPreparationDeps } from "@/lib/services/pinterest";
 import { createRecipeDraft, deleteRecipe, publishRecipe, unpublishRecipe, updateRecipe } from "@/lib/services/recipes";
 import { revalidateCategories } from "@/lib/services/revalidate";
 
@@ -85,13 +87,23 @@ export async function saveRecipeAction(_prev: ActionState, form: FormData): Prom
 
 export async function publishRecipeAction(_prev: ActionState, form: FormData): Promise<ActionState> {
   const { supabase } = await requireAdmin();
+  const id = text(form, "id");
   try {
-    await publishRecipe(supabase, text(form, "id"));
+    await publishRecipe(supabase, id);
   } catch (error) {
     return failure(error);
   }
+  // Prepare the recipe's Pinterest Pin for review. Never posted, never fatal:
+  // the recipe is already live whatever happens here.
+  const pin = await preparePin(supabase, id, pinDeps(supabase)).catch((err: unknown) => ({ outcome: "failed" as const, message: String(err) }));
   revalidatePath("/admin", "layout");
-  return { ok: true, message: "Recipe published. It is now live and in the sitemap." };
+  const pinNote =
+    pin.outcome === "prepared"
+      ? " Its Pinterest Pin is ready for review under Pinterest."
+      : pin.outcome === "failed"
+        ? ` Its Pinterest Pin could not be prepared (${pin.message}). You can retry it under Pinterest.`
+        : "";
+  return { ok: true, message: `Recipe published. It is now live and in the sitemap.${pinNote}` };
 }
 
 export async function unpublishRecipeAction(_prev: ActionState, form: FormData): Promise<ActionState> {
@@ -232,4 +244,72 @@ export async function saveAutomationSettingsAction(_prev: ActionState, form: For
   if (error) return failure(dbError("Save automation settings", error));
   revalidatePath("/admin/automation");
   return { ok: true, message: "Automation settings saved." };
+}
+
+// ---------------------------------------------------------------------------
+// Pinterest (Pins are prepared and reviewed here; nothing is posted)
+// ---------------------------------------------------------------------------
+
+function pinDeps(supabase: SupabaseClient): PinPreparationDeps {
+  return { siteUrl: siteConfig.url, store: createPinImageStore(supabase) };
+}
+
+function pinFromForm(form: FormData) {
+  return {
+    pin_title: text(form, "pin_title"),
+    pin_description: text(form, "pin_description"),
+    keywords: text(form, "keywords")
+      .split(/[,\n]/)
+      .map((k) => k.trim())
+      .filter(Boolean),
+    board_name: text(form, "board_name"),
+    image_text: text(form, "image_text"),
+    image_alt: text(form, "image_alt"),
+  };
+}
+
+export async function savePinAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase, user } = await requireAdmin();
+  let recipeId: string;
+  try {
+    const { pin } = await updatePinContent(supabase, text(form, "id"), pinFromForm(form), user.id);
+    recipeId = pin.recipe_id;
+  } catch (error) {
+    return failure(error);
+  }
+  // Redraws the image only if the image text changed (or the Pin had failed).
+  const result = await preparePin(supabase, recipeId, pinDeps(supabase));
+  revalidatePath("/admin/pinterest", "layout");
+  if (result.outcome === "failed") return { ok: false, message: `Your text was saved, but the Pin image could not be updated: ${result.message}` };
+  return { ok: true, message: result.outcome === "prepared" ? "Pin saved and its image updated." : "Pin saved." };
+}
+
+export async function preparePinAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase } = await requireAdmin();
+  const mode = text(form, "mode");
+  const result = await preparePin(supabase, text(form, "recipe_id"), pinDeps(supabase), {
+    force: mode === "redraw",
+    resetText: mode === "reset",
+  });
+  revalidatePath("/admin/pinterest", "layout");
+  if (result.outcome === "failed") return { ok: false, message: result.message };
+  return { ok: true, message: result.message };
+}
+
+export async function prepareMissingPinsAction(_prev: ActionState, _form: FormData): Promise<ActionState> {
+  const { supabase } = await requireAdmin();
+  try {
+    const { results, remaining } = await prepareMissingPins(supabase, pinDeps(supabase), 10);
+    revalidatePath("/admin/pinterest", "layout");
+    if (results.length === 0) return { ok: true, message: "Every published recipe already has a Pin." };
+    const failed = results.filter((r) => r.result.outcome === "failed").length;
+    const notes = [
+      `${results.length - failed} Pin(s) prepared`,
+      failed ? `${failed} failed (see the error on each Pin)` : "",
+      remaining ? `${remaining} more to go: click again to continue` : "",
+    ].filter(Boolean);
+    return { ok: failed === 0, message: `${notes.join("; ")}.` };
+  } catch (error) {
+    return failure(error);
+  }
 }

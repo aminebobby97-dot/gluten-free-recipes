@@ -41,6 +41,12 @@ export interface PipelineOptions {
   runUrl?: string | null;
   /** Dry runs only: generate for this keyword instead of the next one in the queue. */
   dryRunKeyword?: string;
+  /**
+   * Prepares the recipe's Pinterest Pin after an automatic publish (image and
+   * text saved for review, never posted). Optional and never fatal: a Pin
+   * problem is logged and the published recipe stays as it is.
+   */
+  preparePin?: (recipeId: string, jobId: string) => Promise<void>;
   now?: Date;
 }
 
@@ -312,6 +318,14 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
     } catch {
       // The recipe is already correct in the database; listing pages refresh on
       // the next publish or deploy. Logged by step(), not fatal.
+    }
+    if (opts.preparePin) {
+      const preparePin = opts.preparePin;
+      try {
+        await step("prepare_pin", () => preparePin(recipeId, jobId));
+      } catch {
+        // Logged by step(); the Pin can be retried from Admin → Pinterest.
+      }
     }
     return { status: "succeeded", jobId, mode, recipeId, slug: recipe.slug, imageUrl: image.url, published: true };
   } catch (err) {

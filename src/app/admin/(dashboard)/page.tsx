@@ -70,8 +70,12 @@ export default async function AdminOverviewPage() {
               <dd className="font-semibold text-ink">Off</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-ink-soft">Pins waiting</dt>
-              <dd className="font-semibold text-ink">{stats.pinsPending}</dd>
+              <dt className="text-ink-soft">
+                <Link href="/admin/pinterest?status=ready" className="hover:text-sage-dark">
+                  Pins ready for review
+                </Link>
+              </dt>
+              <dd className="font-semibold text-ink">{stats.pinsReady}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-ink-soft">Keywords imported</dt>
