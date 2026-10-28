@@ -1,5 +1,6 @@
-// Food photos from OpenAI Images, optimized with sharp before upload: a
-// landscape 3:2 WebP for the site and a portrait 2:3 WebP for Pinterest.
+// Food photos from OpenAI Images, optimized with sharp before upload. The
+// pipeline asks only for the landscape 3:2 WebP for the site (Pinterest Pins
+// are drawn from that photo); portrait 2:3 is still supported here.
 
 import OpenAI from "openai";
 import sharp from "sharp";
