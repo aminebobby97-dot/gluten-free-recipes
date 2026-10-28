@@ -46,20 +46,31 @@ create table if not exists public.pinterest_connection (
   updated_at timestamptz not null default now()
 );
 
-drop trigger if exists pinterest_connection_updated_at on public.pinterest_connection;
-create trigger pinterest_connection_updated_at
+-- No DROP statements anywhere in this file: re-running it replaces the trigger
+-- in place and skips the policy if it already exists.
+create or replace trigger pinterest_connection_updated_at
 before update on public.pinterest_connection
 for each row execute function public.set_updated_at();
 
 alter table public.pinterest_connection enable row level security;
 
+-- REVOKE only touches the new pinterest_connection table: it removes the
+-- default access Supabase gives every role on a new table, so that only the
+-- grant below (admins, through RLS) remains.
 revoke all on public.pinterest_connection from public, anon, authenticated, service_role;
 grant select, insert, update, delete on public.pinterest_connection to authenticated;
 
-drop policy if exists "pinterest_connection: admin all" on public.pinterest_connection;
-create policy "pinterest_connection: admin all"
-  on public.pinterest_connection for all to authenticated
-  using ((select public.is_admin())) with check ((select public.is_admin()));
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'pinterest_connection' and policyname = 'pinterest_connection: admin all'
+  ) then
+    create policy "pinterest_connection: admin all"
+      on public.pinterest_connection for all to authenticated
+      using ((select public.is_admin())) with check ((select public.is_admin()));
+  end if;
+end $$;
 
 -- Who published a Pin (manual publishing from the dashboard).
 alter table public.pinterest_posts
