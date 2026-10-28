@@ -31,9 +31,9 @@ Do these in order. The website keeps working normally between steps.
 This adds the "Ready" status, the new Pin fields and the duplicate protection. It only adds things: no existing data, security rules or recipes change.
 
 1. Open [supabase.com](https://supabase.com), open your project, and click **SQL Editor** in the left menu.
-2. Click **New query**. Open `pinterest_before.sql` (in the project files, `pinterest/` folder), copy all of it, paste it, and click **Run**. Write down the numbers. `duplicate_pins` must be **0**.
-3. Click **New query** again. Paste all of `pinterest_migration_sql_editor.sql` and click **Run**. You should see "Success. No rows returned". If you see an error, nothing was changed. Copy the error and send it to Claude.
-4. Click **New query** again. Paste all of `pinterest_verify.sql` and click **Run**. Every row should say **true**, and the counts should match step 2.
+2. Click **New query**. Open `supabase/proposed/pinterest_checks/pinterest_before.sql` (also in the project files, `pinterest/` folder), copy all of it, paste it, and click **Run**. Write down the numbers. `duplicate_pins` must be **0**.
+3. Click **New query** again. Paste all of `supabase/proposed/20261028000001_pinterest_pins.sql` (or `pinterest_migration_sql_editor.sql` from the project files, the same SQL wrapped in one transaction) and click **Run**. You should see "Success. No rows returned". If you see an error, nothing was changed. Copy the error and send it to Claude.
+4. Click **New query** again. Paste all of `supabase/proposed/pinterest_checks/pinterest_verify.sql` and click **Run**. Every row should say **true**, and the counts should match step 2.
 5. Tell Claude it is applied, so the migration file can be moved into `supabase/migrations/`.
 
 ### Step 2: Merge the pull request
