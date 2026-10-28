@@ -9,6 +9,7 @@ const STATUS_STYLES: Record<string, string> = {
   new: "bg-cream-deep text-ink-soft border-line-strong",
   pending: "bg-cream-deep text-ink-soft border-line-strong",
   in_review: "bg-honey-wash text-honey border-honey/30",
+  ready: "bg-honey-wash text-honey border-honey/30",
   queued: "bg-honey-wash text-honey border-honey/30",
   assigned: "bg-honey-wash text-honey border-honey/30",
   running: "bg-honey-wash text-honey border-honey/30",

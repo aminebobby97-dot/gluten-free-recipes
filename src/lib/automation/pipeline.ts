@@ -14,7 +14,7 @@ import { dbError } from "@/lib/services/errors";
 import { claimJob, failJob, getOrCreateDailyJob, MAX_JOB_RETRIES, recordJobStep, toJobDate, JOB_LEASE_MINUTES, type PublishingJob } from "@/lib/services/jobs";
 import { BudgetExceededError } from "./cost";
 import { checkBudget, logEvent, markAttempt, recordAttempt, type AttemptKind } from "./log";
-import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type PhotoOrientation, type SiteRefresher } from "./types";
+import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type SiteRefresher } from "./types";
 import { blocking, parseGeneratedRecipe, validateGeneratedRecipe } from "./validate";
 
 export type RunMode = "dry_run" | "review" | "auto";
@@ -41,6 +41,12 @@ export interface PipelineOptions {
   runUrl?: string | null;
   /** Dry runs only: generate for this keyword instead of the next one in the queue. */
   dryRunKeyword?: string;
+  /**
+   * Prepares the recipe's Pinterest Pin after an automatic publish (image and
+   * text saved for review, never posted). Optional and never fatal: a Pin
+   * problem is logged and the published recipe stays as it is.
+   */
+  preparePin?: (recipeId: string, jobId: string) => Promise<void>;
   now?: Date;
 }
 
@@ -52,8 +58,6 @@ export type PipelineResult =
 /** Writer gets one repair round after its first draft. */
 export const MAX_REPAIR_ROUNDS = 1;
 export const MAX_PHOTO_ATTEMPTS = 3;
-/** The Pinterest image is optional, so it gets fewer tries. */
-export const MAX_PIN_PHOTO_ATTEMPTS = 2;
 
 class PipelineError extends Error {
   constructor(
@@ -69,8 +73,8 @@ interface Checkpoint {
   keyword_id?: string;
   recipe?: GeneratedRecipe;
   image?: StoredImage;
+  /** Only on jobs from before the Pinterest photo step was removed; kept so its file is cleaned up. */
   pin_image?: StoredImage;
-  pin_image_skipped?: boolean;
   recipe_id?: string;
 }
 
@@ -219,19 +223,18 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
       }
     });
 
-    // --- 3. Photos ----------------------------------------------------------------
-    // A landscape photo for the site (required) and a 2:3 portrait for Pinterest
-    // (optional: the recipe is still saved without it).
-    const takePhoto = async (orientation: PhotoOrientation, field: "featured_image" | "pinterest_image", attempts: number): Promise<StoredImage> => {
-      const kinds = orientation === "landscape" ? (["image", "image_check"] as const) : (["pin_image", "pin_image_check"] as const);
+    // --- 3. Photo ------------------------------------------------------------------
+    // One landscape photo for the site. The Pinterest Pin is drawn from this same
+    // photo when the recipe is published (src/lib/services/pinterest.ts), so no
+    // second AI image is generated.
+    const takePhoto = async (attempts: number): Promise<StoredImage> => {
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const { result: shot, attemptId } = await callAi(kinds[0], providers.photographer, { recipe, orientation }, attempt);
-        const { result: check } = await callAi(kinds[1], providers.photoChecker, { recipe, photo: shot.output }, attempt);
+        const { result: shot, attemptId } = await callAi("image", providers.photographer, { recipe, orientation: "landscape" }, attempt);
+        const { result: check } = await callAi("image_check", providers.photoChecker, { recipe, photo: shot.output }, attempt);
         if (check.output.ok) {
           const ext = shot.output.mimeType.split("/")[1];
           const folder = mode === "dry_run" ? "dry-run" : "recipes";
-          const suffix = orientation === "portrait" ? "-pin" : "";
-          const path = `${folder}/${toJobDate(now).slice(0, 4)}/${recipe.slug}-${jobId.slice(0, 8)}${suffix}.${ext}`;
+          const path = `${folder}/${toJobDate(now).slice(0, 4)}/${recipe.slug}-${jobId.slice(0, 8)}.${ext}`;
           const url = await opts.images.upload(path, shot.output);
           return { path, url, alt: recipe.image_alt };
         }
@@ -239,30 +242,18 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
           db,
           attemptId,
           "rejected",
-          check.output.problems.map((p) => ({ severity: "blocking", source: "photo", field, message: p })),
+          check.output.problems.map((p) => ({ severity: "blocking", source: "photo", field: "featured_image", message: p })),
         );
       }
-      throw new PipelineError(`No acceptable ${orientation} photo after ${attempts} attempts.`);
+      throw new PipelineError(`No acceptable photo after ${attempts} attempts.`);
     };
 
     const image = await step("generate_photo", async () => {
       if (cp.image) return cp.image;
-      const saved = await takePhoto("landscape", "featured_image", MAX_PHOTO_ATTEMPTS);
+      const saved = await takePhoto(MAX_PHOTO_ATTEMPTS);
       await saveCheckpoint({ image: saved });
       return saved;
     });
-
-    let pinImage: StoredImage | null = cp.pin_image ?? null;
-    if (!pinImage && !cp.pin_image_skipped) {
-      try {
-        pinImage = await step("generate_pin_photo", () => takePhoto("portrait", "pinterest_image", MAX_PIN_PHOTO_ATTEMPTS));
-        await saveCheckpoint({ pin_image: pinImage });
-      } catch (err) {
-        // Over budget is a real stop; any other failure only costs the Pinterest image.
-        if (err instanceof BudgetExceededError) throw err;
-        await saveCheckpoint({ pin_image_skipped: true });
-      }
-    }
 
     // --- 4. Dry run ends here, nothing saved -------------------------------------
     if (mode === "dry_run") {
@@ -279,8 +270,8 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
         category_id: category.id,
         featured_image: image.url,
         featured_image_alt: image.alt,
-        pinterest_image: pinImage?.url ?? null,
-        pinterest_image_alt: pinImage?.alt ?? null,
+        pinterest_image: null,
+        pinterest_image_alt: null,
         is_tested: false,
       });
       const { data, error } = await db
@@ -312,6 +303,14 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
     } catch {
       // The recipe is already correct in the database; listing pages refresh on
       // the next publish or deploy. Logged by step(), not fatal.
+    }
+    if (opts.preparePin) {
+      const preparePin = opts.preparePin;
+      try {
+        await step("prepare_pin", () => preparePin(recipeId, jobId));
+      } catch {
+        // Logged by step(); the Pin can be retried from Admin → Pinterest.
+      }
     }
     return { status: "succeeded", jobId, mode, recipeId, slug: recipe.slug, imageUrl: image.url, published: true };
   } catch (err) {

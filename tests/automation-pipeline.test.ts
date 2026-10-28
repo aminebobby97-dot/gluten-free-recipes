@@ -58,18 +58,18 @@ describe("runDailyRecipe: review mode", () => {
     expect(data.publishing_jobs[0]).toMatchObject({ status: "succeeded", current_step: "awaiting_review", mode: "review", recipe_id: recipe.id });
     expect(site.refreshed).toEqual([]);
 
-    // One writer call, one review, then a site photo and a Pinterest photo, each checked: each logged with its cost.
-    expect([ai.writer.calls(), ai.reviewer.calls(), ai.photographer.calls(), ai.photoChecker.calls()]).toEqual([1, 1, 2, 2]);
-    expect(data.generation_attempts.map((a) => a.kind)).toEqual(["recipe", "review", "image", "image_check", "pin_image", "pin_image_check"]);
-    expect(data.publishing_jobs[0].cost_usd).toBe(0.44);
-    expect(recipe.pinterest_image).toBe(`https://cdn.test/${images.uploaded[1]}`);
-    expect(images.uploaded[1]).toMatch(/^recipes\/2026\/gluten-free-blueberry-muffins-.+-pin\.webp$/);
+    // One writer call, one review, then one site photo and its check: each logged with its cost.
+    // No separate AI Pinterest photo: the Pin is drawn from the site photo when the recipe is published.
+    expect([ai.writer.calls(), ai.reviewer.calls(), ai.photographer.calls(), ai.photoChecker.calls()]).toEqual([1, 1, 1, 1]);
+    expect(data.generation_attempts.map((a) => a.kind)).toEqual(["recipe", "review", "image", "image_check"]);
+    expect(data.publishing_jobs[0].cost_usd).toBe(0.37);
+    expect(images.uploaded).toHaveLength(1);
+    expect(recipe.pinterest_image).toBeNull();
     expect(data.generation_attempts[2].output).toEqual({ bytes: 3, mimeType: "image/webp" });
     expect(data.publishing_job_events.filter((e) => e.status === "succeeded").map((e) => e.step)).toEqual([
       "select_keyword",
       "generate_recipe",
       "generate_photo",
-      "generate_pin_photo",
       "save_recipe",
     ]);
   });
@@ -106,6 +106,28 @@ describe("runDailyRecipe: auto mode", () => {
     const result = await runDailyRecipe({ db, providers: ai.providers, images: images.store, site: fakeSite(true).site, requestedMode: "auto", trigger: "schedule", envEnabled: true, now: NOW });
     expect(result).toMatchObject({ status: "succeeded", published: true });
     expect(data.publishing_job_events).toContainEqual(expect.objectContaining({ step: "refresh_site", status: "failed" }));
+  });
+
+  it("prepares the Pinterest Pin after publishing, and a Pin failure keeps the recipe published", async () => {
+    const reviewed = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" }));
+    const ok = automationDb({ settings: { publish_mode: "auto" }, recipes: reviewed });
+    const preparePin = vi.fn(async () => undefined);
+    expect(await run(ok.db, fakeProviders(), { requestedMode: "auto", preparePin }).result).toMatchObject({ status: "succeeded", published: true });
+    expect(preparePin).toHaveBeenCalledWith(ok.data.recipes.at(-1)?.id, expect.any(String));
+    expect(ok.data.publishing_job_events).toContainEqual(expect.objectContaining({ step: "prepare_pin", status: "succeeded" }));
+
+    const broken = automationDb({ settings: { publish_mode: "auto" }, recipes: reviewed });
+    const failing = vi.fn(async () => Promise.reject(new Error("photo download failed")));
+    expect(await run(broken.db, fakeProviders(), { requestedMode: "auto", preparePin: failing }).result).toMatchObject({ status: "succeeded", published: true });
+    expect(broken.data.recipes.at(-1)?.status).toBe("published");
+    expect(broken.data.publishing_job_events).toContainEqual(expect.objectContaining({ step: "prepare_pin", status: "failed" }));
+  });
+
+  it("does not prepare a Pin in review mode (the admin's publish does that)", async () => {
+    const { db } = automationDb();
+    const preparePin = vi.fn(async () => undefined);
+    expect(await run(db, fakeProviders(), { preparePin }).result).toMatchObject({ mode: "review", published: false });
+    expect(preparePin).not.toHaveBeenCalled();
   });
 });
 
@@ -152,11 +174,11 @@ describe("runDailyRecipe: failures never publish", () => {
 
   it("retries a photo the checker rejects", async () => {
     const { db, data } = automationDb();
-    const ai = fakeProviders({ photoOk: [false, true, true] });
+    const ai = fakeProviders({ photoOk: [false, true] });
     const { result, images } = run(db, ai);
     expect(await result).toMatchObject({ status: "succeeded" });
-    expect(ai.photographer.calls()).toBe(3);
-    expect(images.uploaded).toHaveLength(2);
+    expect(ai.photographer.calls()).toBe(2);
+    expect(images.uploaded).toHaveLength(1);
     expect(data.generation_attempts.filter((a) => a.kind === "image").map((a) => a.status)).toEqual(["rejected", "succeeded"]);
   });
 
@@ -179,15 +201,15 @@ describe("runDailyRecipe: failures never publish", () => {
     expect(data.publishing_jobs[0].cost_usd).toBe(0.03);
   });
 
-  it("saves the recipe without a Pinterest image when that photo keeps failing", async () => {
+  it("fails without saving when no site photo passes the check", async () => {
     const { db, data } = automationDb();
-    const ai = fakeProviders({ photoOk: [true, false, false] });
+    const ai = fakeProviders({ photoOk: [false, false, false] });
     const { result, images } = run(db, ai);
-    expect(await result).toMatchObject({ status: "succeeded" });
+    expect(await result).toMatchObject({ status: "failed", error: expect.stringContaining("No acceptable photo") });
     expect(ai.photographer.calls()).toBe(3);
-    expect(images.uploaded).toHaveLength(1);
-    expect(data.recipes[0]).toMatchObject({ status: "in_review", pinterest_image: null });
-    expect(data.generation_attempts.filter((a) => a.kind === "pin_image").map((a) => a.status)).toEqual(["rejected", "rejected"]);
+    expect(images.uploaded).toHaveLength(0);
+    expect(data.recipes).toHaveLength(0);
+    expect(data.generation_attempts.filter((a) => a.kind === "image").map((a) => a.status)).toEqual(["rejected", "rejected", "rejected"]);
   });
 
   it("gives the keyword back and deletes the photos when the last retry fails", async () => {
@@ -201,7 +223,7 @@ describe("runDailyRecipe: failures never publish", () => {
     expect(out).toMatchObject({ status: "failed" });
     expect(out.status === "failed" && out.error).toMatch(/insert failed/);
     expect(data.keywords[0].status).toBe("new");
-    expect(images.uploaded).toHaveLength(2);
+    expect(images.uploaded).toHaveLength(1);
     expect(images.removed).toEqual(images.uploaded);
   });
 });
@@ -222,7 +244,7 @@ describe("runDailyRecipe: resume", () => {
     const ai = fakeProviders();
     expect(await run(db, ai).result).toMatchObject({ status: "succeeded" });
     expect(ai.writer.calls()).toBe(0);
-    expect(ai.photographer.calls()).toBe(2);
+    expect(ai.photographer.calls()).toBe(1);
   });
 
   it("takes over a job whose worker crashed", async () => {

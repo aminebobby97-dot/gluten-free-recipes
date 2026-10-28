@@ -41,17 +41,16 @@ async function count(db: SupabaseClient, table: string, filter?: [string, string
 }
 
 export async function getDashboardStats(db: SupabaseClient) {
-  const [published, draft, inReview, keywordsNew, keywordsTotal, jobsFailed, pinsFailed, pinsPending] = await Promise.all([
+  const [published, draft, inReview, keywordsNew, keywordsTotal, jobsFailed, pins] = await Promise.all([
     count(db, "recipes", ["status", "published"]),
     count(db, "recipes", ["status", "draft"]),
     count(db, "recipes", ["status", "in_review"]),
     count(db, "keywords", ["status", "new"]),
     count(db, "keywords"),
     count(db, "publishing_jobs", ["status", "failed"]),
-    count(db, "pinterest_posts", ["publication_status", "failed"]),
-    count(db, "pinterest_posts", ["publication_status", "pending"]),
+    countPinsByStatus(db),
   ]);
-  return { published, draft, inReview, keywordsNew, keywordsTotal, jobsFailed, pinsFailed, pinsPending };
+  return { published, draft, inReview, keywordsNew, keywordsTotal, jobsFailed, pinsFailed: pins.failed, pinsReady: pins.ready };
 }
 
 export async function listCategories(db: SupabaseClient): Promise<Category[]> {
@@ -113,25 +112,72 @@ export async function listJobs(db: SupabaseClient, onlyFailed = false): Promise<
 export interface AdminPinRow {
   id: string;
   pin_title: string;
+  pin_description: string;
+  keywords: string[];
+  board_name: string;
+  image_text: string | null;
   destination_url: string;
-  image_url: string;
+  image_url: string | null;
   publication_status: string;
   pinterest_pin_id: string | null;
   error_message: string | null;
   retry_count: number;
+  prepared_at: string | null;
+  edited_at: string | null;
   published_at: string | null;
   created_at: string;
-  recipe: { id: string; title: string } | null;
+  recipe: { id: string; title: string; slug: string; status: RecipeStatus } | null;
 }
 
-export async function listPins(db: SupabaseClient, onlyFailed = false): Promise<AdminPinRow[]> {
-  let query = db
-    .from("pinterest_posts")
-    .select("id,pin_title,destination_url,image_url,publication_status,pinterest_pin_id,error_message,retry_count,published_at,created_at,recipe:recipes(id,title)")
-    .order("created_at", { ascending: false })
-    .limit(200);
-  if (onlyFailed) query = query.eq("publication_status", "failed");
+export const PIN_STATUSES = ["ready", "pending", "failed", "published"] as const;
+
+/** Codes for a column, table or enum value that does not exist yet (the Pinterest migration is not applied). */
+const NOT_MIGRATED = new Set(["PGRST204", "PGRST205", "42P01", "42703", "22P02"]);
+
+function notMigrated(error: { code?: string } | null): boolean {
+  return Boolean(error?.code && NOT_MIGRATED.has(error.code));
+}
+
+const PIN_COLUMNS =
+  "id,pin_title,pin_description,keywords,board_name,image_text,destination_url,image_url,publication_status,pinterest_pin_id,error_message,retry_count,prepared_at,edited_at,published_at,created_at,recipe:recipes(id,title,slug,status)";
+
+/** Pins, newest first. Returns null until the Pinterest migration is applied. */
+export async function listPins(db: SupabaseClient, status?: string): Promise<AdminPinRow[] | null> {
+  let query = db.from("pinterest_posts").select(PIN_COLUMNS).order("created_at", { ascending: false }).limit(200);
+  if (status) query = query.eq("publication_status", status);
   const { data, error } = await query;
-  if (error) throw dbError("List Pinterest posts", error);
+  if (notMigrated(error)) return null;
+  if (error) throw dbError("List Pinterest Pins", error);
   return (data ?? []) as unknown as AdminPinRow[];
+}
+
+export interface AdminPinDetail extends AdminPinRow {
+  image_alt: string | null;
+  image_path: string | null;
+  board_id: string | null;
+  recipe: { id: string; title: string; slug: string; status: RecipeStatus; featured_image: string | null; pinterest_image: string | null } | null;
+}
+
+export async function getPin(db: SupabaseClient, id: string): Promise<AdminPinDetail | null> {
+  const { data, error } = await db
+    .from("pinterest_posts")
+    .select(`${PIN_COLUMNS.replace(/,recipe:.*$/, "")},image_alt,image_path,board_id,recipe:recipes(id,title,slug,status,featured_image,pinterest_image)`)
+    .eq("id", id)
+    .maybeSingle();
+  if (notMigrated(error)) return null;
+  if (error) throw dbError("Load Pinterest Pin", error);
+  return (data as unknown as AdminPinDetail | null) ?? null;
+}
+
+/** Pin counts by status, all zero until the Pinterest migration is applied. */
+export async function countPinsByStatus(db: SupabaseClient): Promise<Record<(typeof PIN_STATUSES)[number], number>> {
+  const counts = await Promise.all(
+    PIN_STATUSES.map(async (status) => {
+      const { count: c, error } = await db.from("pinterest_posts").select("id", { count: "exact", head: true }).eq("publication_status", status);
+      if (notMigrated(error)) return 0;
+      if (error) throw dbError("Count Pinterest Pins", error);
+      return c ?? 0;
+    }),
+  );
+  return Object.fromEntries(PIN_STATUSES.map((s, i) => [s, counts[i]])) as Record<(typeof PIN_STATUSES)[number], number>;
 }

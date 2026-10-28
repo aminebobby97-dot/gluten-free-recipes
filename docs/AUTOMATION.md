@@ -1,6 +1,6 @@
 # Daily AI recipes: setup guide
 
-This guide sets up the Phase 2 automation: one AI-written gluten-free recipe a day, with a site photo and a Pinterest photo, checked before anything is saved. You only need a web browser. Do the steps in order; each one says what it is for.
+This guide sets up the Phase 2 automation: one AI-written gluten-free recipe a day, with a site photo, checked before anything is saved. You only need a web browser. Do the steps in order; each one says what it is for.
 
 ## How it works
 
@@ -10,7 +10,7 @@ A GitHub Actions workflow runs a small program (the "worker"). The worker:
 2. Asks Claude (Anthropic) to write the recipe as structured data.
 3. Checks it in code: gluten ingredients and cross-contact notes, allergens, ingredients used in the steps, times, oven and food-safety temperatures, SEO fields, duplicates.
 4. Asks a second, independent Claude review to look for errors. A failing draft gets one repair attempt, then the run stops.
-5. Asks OpenAI for two photos (landscape 3:2 for the site, portrait 2:3 for Pinterest), and Claude checks that each photo matches the recipe.
+5. Asks OpenAI for one photo (landscape 3:2 for the site), and Claude checks that it matches the recipe. The Pinterest Pin is made later from this same photo, so no second AI image is paid for.
 6. Saves the recipe as **In review** for you to approve (or, later, publishes it).
 
 Every step, AI call and cost is logged in the admin dashboard under **Publishing jobs**.
@@ -34,7 +34,7 @@ A **dry run** is the exception: it works while automation is off, because it nev
 You pay Anthropic and OpenAI directly, per use. These are estimates; the real figures appear in the job log after your first dry run.
 
 - Claude writing and review: about $0.20 to $0.50 per recipe.
-- Photos: two images plus their checks, about $0.20 to $0.50 per recipe.
+- Photo: one image plus its check, about $0.10 to $0.25 per recipe. (The Pinterest Pin image is made from it at no AI cost.)
 - A recipe that needs a repair or a photo retry costs more. The daily budget caps the total.
 
 GitHub Actions is free for this amount of use (a run takes a few minutes).
@@ -120,7 +120,7 @@ After 5 approvals you can choose **Automatic** in Admin → Automation, and the 
 
 ## Pinterest
 
-The Pinterest image is already generated and saved with each recipe, but nothing is posted to Pinterest. Posting will be added after your Pinterest Business account and API access are ready.
+When a recipe is published (by you, or by the worker in automatic mode), its Pinterest Pin is prepared from the recipe's photo and saved as **Ready** in Admin → Pinterest for your review. This uses no AI and costs nothing. A Pin problem never stops a recipe from being published; it appears as a `prepare_pin` step in the job log. Nothing is posted to Pinterest. See [PINTEREST.md](PINTEREST.md).
 
 ## Troubleshooting
 

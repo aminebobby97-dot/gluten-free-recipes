@@ -190,13 +190,16 @@ export function analyzeClaims(
     ...recipe.instructions.map((s, i): [string, string] => [`instructions[${i}]`, s.text]),
   ];
 
+  return fields.flatMap(([field, value]) => analyzeClaimText(field, value));
+}
+
+/** Scans one piece of text (for example a Pinterest description) for forbidden claims. */
+export function analyzeClaimText(field: string, value: string | null | undefined): ClaimFinding[] {
+  if (!value) return [];
   const findings: ClaimFinding[] = [];
-  for (const [field, value] of fields) {
-    if (!value) continue;
-    for (const [pattern, message] of FORBIDDEN_CLAIMS) {
-      const match = value.match(pattern);
-      if (match) findings.push({ field, phrase: match[0], message });
-    }
+  for (const [pattern, message] of FORBIDDEN_CLAIMS) {
+    const match = value.match(pattern);
+    if (match) findings.push({ field, phrase: match[0], message });
   }
   return findings;
 }

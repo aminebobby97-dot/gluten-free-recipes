@@ -14,6 +14,12 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   poweredByHeader: false,
+  // Pinterest Pin images are drawn in admin Server Actions with these fonts
+  // (read from disk at runtime, so they must be shipped with the functions).
+  outputFileTracingIncludes: {
+    "/admin": ["./src/lib/pins/fonts/*.woff"],
+    "/admin/**": ["./src/lib/pins/fonts/*.woff"],
+  },
   images: {
     formats: ["image/avif", "image/webp"],
     remotePatterns: supabaseUrl
