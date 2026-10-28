@@ -40,6 +40,13 @@ export const metadata: Metadata = {
   formatDetection: {
     telephone: false,
   },
+  // Site ownership verification. Kept under `verification` (not `other`) so pages
+  // that set their own `other` metadata, like recipe pages, don't drop it.
+  verification: {
+    other: {
+      "p:domain_verify": "1e70ecf0c48b5f2275919c5825eccd41",
+    },
+  },
 };
 
 export const viewport: Viewport = {
