@@ -38,7 +38,7 @@ export function goodRecipe(overrides: Partial<GeneratedRecipe> = {}): GeneratedR
     yield_description: "12 muffins",
     nutrition: null,
     tips: ["Use a dedicated gluten-free muffin tin or new liners to avoid cross-contact."],
-    substitutions: [{ original: "whole milk", substitute: "unsweetened almond milk", note: "Makes them dairy-free if you also swap the butter." }],
+    substitutions: [{ original: "whole milk", substitute: "unsweetened almond milk", note: "Makes them dairy-free if you also swap the butter. Almond milk adds a tree-nut allergen." }],
     storage_instructions: "Keep in an airtight container for 2 days or freeze for up to 3 months.",
     faq: [
       { question: "Can I use frozen blueberries?", answer: "Yes. Do not thaw them first, and toss them in a tablespoon of the flour." },

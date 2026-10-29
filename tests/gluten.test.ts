@@ -38,6 +38,12 @@ describe("analyzeIngredient", () => {
     }
   });
 
+  it("flags packaged nuts, seeds and dried fruit for label checks", () => {
+    for (const name of ["chopped walnuts", "pecans", "sliced almonds", "chia seeds", "raisins", "dried cranberries"]) {
+      expect(analyzeIngredient(ing(name)), name).toMatchObject({ severity: "check_label", message: expect.stringContaining("shared lines") });
+    }
+  });
+
   it("ignores naturally gluten-free whole foods", () => {
     for (const name of ["large eggs", "fresh blueberries", "unsalted butter", "almond flour", "rice", "olive oil", "Parmesan cheese"]) {
       expect(analyzeIngredient(ing(name)), name).toBeNull();

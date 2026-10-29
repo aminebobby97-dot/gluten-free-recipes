@@ -41,7 +41,7 @@ describe("Claude providers", () => {
     const result = await writer.run(writerInput);
 
     expect(result.output).toEqual(goodRecipe());
-    expect(result).toMatchObject({ provider: "anthropic", model: "claude-opus-5-5", promptVersion: "recipe-v1", inputTokens: 1000, outputTokens: 2000 });
+    expect(result).toMatchObject({ provider: "anthropic", model: "claude-opus-5-5", promptVersion: "recipe-v2", inputTokens: 1000, outputTokens: 2000 });
     // 1,000 input at $4/M + 2,000 output at $20/M
     expect(result.costUsd).toBeCloseTo(0.044, 6);
 
