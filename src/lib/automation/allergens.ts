@@ -62,6 +62,38 @@ export function detectAllergens(ingredients: Array<Pick<Ingredient, "name" | "no
   return ALLERGENS.filter((a) => found.has(a));
 }
 
+/** Words that tell a reader a suggestion adds an allergen. */
+const ALLERGY_NOTE = /\ballerg(y|ies|en|ens|ic)\b|\b(tree[- ]nut|peanut)[- ]free\b|\bnut[- ]free\b/i;
+
+/** Allergens readers can add through optional suggestions. Kept to nuts, where a missed note is most dangerous. */
+const OPTIONAL_ALLERGENS: Allergen[] = ["tree_nuts", "peanuts"];
+
+export interface OptionalAllergenText {
+  field: string;
+  text: string;
+}
+
+/**
+ * Nuts suggested in the FAQ, tips or substitutions ("add chopped walnuts")
+ * that the allergen list does not declare. Each such suggestion must say, in
+ * the same item, that it adds an allergen, because the declared list only
+ * covers the main ingredients.
+ */
+export function undeclaredOptionalAllergens(declared: readonly string[], texts: OptionalAllergenText[]): AllergenIssue[] {
+  const issues: AllergenIssue[] = [];
+  for (const { field, text } of texts) {
+    for (const allergen of allergensInIngredient({ name: text, note: "" })) {
+      if (!OPTIONAL_ALLERGENS.includes(allergen) || declared.includes(allergen) || ALLERGY_NOTE.test(text)) continue;
+      issues.push({
+        severity: "blocking",
+        allergen,
+        message: `${field} suggests ${ALLERGEN_LABELS[allergen].toLowerCase()}, which the allergen list does not include. Say in the same answer that they add a ${ALLERGEN_LABELS[allergen].toLowerCase().replace(/s$/, "")} allergen.`,
+      });
+    }
+  }
+  return issues;
+}
+
 export interface AllergenIssue {
   severity: "blocking" | "warning";
   allergen: Allergen;

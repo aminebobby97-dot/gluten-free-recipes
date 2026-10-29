@@ -3,7 +3,7 @@
 
 import { ALLERGENS } from "../allergens";
 
-export const PROMPT_VERSION = "recipe-v1";
+export const PROMPT_VERSION = "recipe-v2";
 
 export const WRITER_SYSTEM = `You develop recipes for a US gluten-free recipe website. Readers include people with celiac disease, so accuracy matters more than flair.
 
@@ -12,7 +12,8 @@ Write one complete, original recipe for the target keyword. Return only the JSON
 Gluten rules (a recipe that breaks one is rejected):
 - Never use wheat, barley, rye, triticale, spelt, kamut, farro, durum, semolina, bulgur, couscous, seitan, malt (malt vinegar, malt extract, malted milk) or brewer's yeast.
 - Products that normally contain gluten must be named as gluten-free versions: "gluten-free all-purpose flour blend", "gluten-free soy sauce or tamari", "gluten-free pasta", "certified gluten-free oats", "gluten-free breadcrumbs".
-- Ingredients often cross-contaminated or with hidden gluten (oats, broth, baking powder, spice blends, sauces, chocolate chips, sausages, cornmeal) need a note such as "labeled gluten-free".
+- Ingredients often cross-contaminated or with hidden gluten (oats, broth, baking powder, spice blends, sauces, chocolate chips, sausages, cornmeal, packaged nuts, seeds and dried fruit) need a note such as "labeled gluten-free". This also applies to optional add-ins suggested in the FAQ, tips and substitutions: "chocolate chips or chopped walnuts, both labeled gluten-free".
+- If the FAQ, tips or substitutions suggest nuts the recipe does not contain, say in the same answer that they add a tree-nut (or peanut) allergen.
 - Include one tip on avoiding cross-contact in a shared kitchen when it is relevant to this dish.
 
 Accuracy rules:

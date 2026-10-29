@@ -33,6 +33,10 @@ async function main(): Promise<number> {
   const requestedMode = (process.env.RUN_MODE?.trim() || "dry_run") as RunMode;
   if (!MODES.includes(requestedMode)) throw new Error(`RUN_MODE must be one of ${MODES.join(", ")}.`);
   const trigger = process.env.RUN_TRIGGER === "schedule" ? "schedule" : "manual";
+  const resumeJobId = process.env.RESUME_JOB_ID?.trim() || undefined;
+  if (resumeJobId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resumeJobId)) {
+    throw new Error("resume_job_id must be a job id like f5e10611-25e2-46f5-a577-2a4de83483bd.");
+  }
 
   const supabaseUrl = required("NEXT_PUBLIC_SUPABASE_URL");
   const supabaseKey = process.env.SUPABASE_SECRET_KEY?.trim() || required("SUPABASE_SERVICE_ROLE_KEY");
@@ -67,6 +71,7 @@ async function main(): Promise<number> {
     envEnabled: process.env.AUTOMATION_ENABLED === "true",
     runUrl,
     dryRunKeyword: process.env.DRY_RUN_KEYWORD?.trim() || undefined,
+    resumeJobId,
     // Pinterest Pins are only prepared for review (no AI cost, nothing posted).
     preparePin: siteUrl
       ? async (recipeId, jobId) => {

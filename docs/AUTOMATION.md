@@ -118,6 +118,18 @@ When you approve activation:
 
 After 5 approvals you can choose **Automatic** in Admin → Automation, and the daily schedule can be switched on in the workflow.
 
+## Recovering a rejected draft
+
+A draft that fails its checks is never saved, but its text stays in the job's AI log. When the only problem is small (one sentence in the FAQ, say), you can fix that copy instead of paying for a whole new recipe:
+
+1. Claude writes you a SQL statement for the failed job. It copies the rejected draft, changes only the wording that failed, and saves it on the job as a **corrected draft**. You run it in the Supabase SQL Editor. It refuses if the job isn't failed, has no tries left, or already has a recipe.
+2. Run the workflow with mode `review`. If the job is from an earlier day, also paste its id in **resume_job_id**.
+3. The corrected draft goes through **every** check again: the code checks, the duplicate checks, and the independent Claude review (one call, a few cents). Claude never rewrites or repairs it.
+   - If it passes, the run makes the photo and saves the recipe as **In review**. A corrected draft is never published automatically, even in auto mode.
+   - If it fails, the run stops before any further AI call. Running it again costs nothing until a new correction replaces it.
+
+The daily budget applies as usual, and each try counts toward the job's 3 tries.
+
 ## Pinterest
 
 When a recipe is published (by you, or by the worker in automatic mode), its Pinterest Pin is prepared from the recipe's photo and saved as **Ready** in Admin → Pinterest for your review. This uses no AI and costs nothing. A Pin problem never stops a recipe from being published; it appears as a `prepare_pin` step in the job log. Nothing is posted to Pinterest. See [PINTEREST.md](PINTEREST.md).
@@ -131,5 +143,6 @@ When a recipe is published (by you, or by the worker in automatic mode), its Pin
 | `Daily AI budget reached` | Wait until tomorrow (UTC) or raise the budget in Admin → Automation |
 | `No usable keywords left` | Import more keywords, or raise the difficulty limit in Admin → Automation |
 | `The recipe failed N check(s)` | Normal: a draft that fails is never saved. The job log lists each finding. The keyword is retried on the next run |
+| `The corrected draft already failed its checks` | A corrected draft is only reviewed once. Replace it with a new correction (see Recovering a rejected draft) |
 | `Site refresh failed with HTTP 401` | `REVALIDATE_SECRET` differs between Vercel and GitHub, or Vercel was not redeployed |
 | OpenAI `organization must be verified` | Complete Step 3.4 |

@@ -4,7 +4,7 @@
 // checks need the database and run in the pipeline.
 
 import { getPublishReadiness } from "@/lib/recipes/validation";
-import { compareAllergens } from "./allergens";
+import { compareAllergens, undeclaredOptionalAllergens } from "./allergens";
 import { checkConsistency } from "./consistency";
 import { keywordSimilarity } from "./keywords";
 import { generatedRecipeSchema, type CategoryOption, type GeneratedRecipe, type Issue, type KeywordRow } from "./types";
@@ -48,6 +48,12 @@ export function validateGeneratedRecipe(recipe: GeneratedRecipe, keyword: Keywor
 
   for (const c of checkConsistency(recipe)) add("consistency", c.severity, c.field, c.message);
   for (const a of compareAllergens(recipe.allergens, recipe.ingredients)) add("allergens", a.severity, "allergens", a.message);
+  const suggestions = [
+    ...recipe.faq.map((f, i) => ({ field: `faq[${i}]`, text: `${f.question} ${f.answer}` })),
+    ...recipe.tips.map((t, i) => ({ field: `tips[${i}]`, text: t })),
+    ...recipe.substitutions.map((s, i) => ({ field: `substitutions[${i}]`, text: `${s.substitute} ${s.note ?? ""}` })),
+  ];
+  for (const a of undeclaredOptionalAllergens(recipe.allergens, suggestions)) add("allergens", a.severity, "allergens", a.message);
 
   // SEO: stricter than for hand-written recipes.
   const seoTitle = recipe.seo_title ?? recipe.title;

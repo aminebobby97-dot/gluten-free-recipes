@@ -72,6 +72,10 @@ const CHECK_LABEL: Array<[RegExp, string]> = [
   [/\b(sausages?|hot dogs?|deli|meatballs?|imitation crab)\b/i, "Processed meats can contain wheat-based binders. Check the label."],
   [/\b(cornmeal|polenta|grits)\b/i, "Corn products can be milled alongside wheat. Choose ones labeled gluten-free."],
   [/\bxanthan gum\b|\bpsyllium\b/i, "Check that the binder is labeled gluten-free."],
+  [
+    /\b(walnuts?|pecans?|almonds?(?! (flour|meal|milk|butter))|cashews?|pistachios?|hazelnuts?|macadamias?|peanuts?|pine nuts|nuts|(chia|flax|sunflower|pumpkin|sesame|poppy|hemp) seeds|dried fruit|raisins|dried cranberries)\b/i,
+    "Packaged nuts, seeds and dried fruit are often processed on shared lines with wheat. Use ones labeled gluten-free.",
+  ],
   [/\b(dairy[- ]free|vegan|plant[- ]based) (butter|cheese|yogurt|milk|cream)\b/i, "Some dairy-free products contain oats or barley. Check the label."],
 ];
 

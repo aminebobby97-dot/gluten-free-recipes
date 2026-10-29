@@ -263,6 +263,103 @@ describe("runDailyRecipe: resume", () => {
   });
 });
 
+describe("runDailyRecipe: corrected draft", () => {
+  const rejectedJob = (overrides: Record<string, unknown> = {}, checkpoint: Record<string, unknown> = {}) => ({
+    id: "job-fix",
+    job_type: "daily_recipe",
+    job_date: "2026-11-02",
+    idempotency_key: "daily_recipe:2026-11-02",
+    status: "failed",
+    retry_count: 1,
+    checkpoint: { keyword_id: "kw-1", corrected_draft: goodRecipe(), correction: { note: "FAQ: walnuts labeled gluten-free" }, ...checkpoint },
+    ...overrides,
+  });
+  const queuedDb = (job = rejectedJob(), opts: Parameters<typeof automationDb>[0] = {}) => {
+    const out = automationDb(opts);
+    out.data.keywords[0].status = "queued";
+    out.data.publishing_jobs.push(job);
+    return out;
+  };
+
+  it("re-checks the corrected draft with the code checks and one AI review, without calling the writer", async () => {
+    const { db, data } = queuedDb();
+    const ai = fakeProviders();
+    expect(await run(db, ai).result).toMatchObject({ status: "succeeded", mode: "review", published: false, jobId: "job-fix" });
+    expect([ai.writer.calls(), ai.repairer.calls(), ai.reviewer.calls(), ai.photographer.calls()]).toEqual([0, 0, 1, 1]);
+    expect(data.recipes).toHaveLength(1);
+    expect(data.recipes[0]).toMatchObject({ status: "in_review", source: "ai", is_tested: false, generation_job_id: "job-fix" });
+    expect(data.keywords[0]).toMatchObject({ status: "assigned", assigned_recipe_id: data.recipes[0].id });
+    expect(data.publishing_job_events).toContainEqual(expect.objectContaining({ step: "generate_recipe", status: "info", detail: { correction: { note: "FAQ: walnuts labeled gluten-free" } } }));
+  });
+
+  it("stops without any AI call when the corrected draft fails a code check, and does not review it again", async () => {
+    const draft = goodRecipe({ allergens: ["milk"] }); // eggs not declared
+    const { db, data } = queuedDb(rejectedJob({}, { corrected_draft: draft }));
+    const ai = fakeProviders();
+    const out = await run(db, ai).result;
+    expect(out).toMatchObject({ status: "failed", error: expect.stringContaining("corrected draft failed 1 check") });
+    expect([ai.writer.calls(), ai.repairer.calls(), ai.reviewer.calls(), ai.photographer.calls()]).toEqual([0, 0, 0, 0]);
+    expect(data.recipes).toHaveLength(0);
+    expect(data.keywords[0].status).toBe("queued"); // retries left: stays with the job
+    expect(data.publishing_jobs[0]).toMatchObject({ status: "failed", retry_count: 2 });
+
+    const again = await run(db, ai).result;
+    expect(again).toMatchObject({ status: "failed", error: expect.stringContaining("already failed its checks") });
+    expect([ai.writer.calls(), ai.reviewer.calls()]).toEqual([0, 0]);
+  });
+
+  it("stops when the AI reviewer still finds a blocking issue, without a repair", async () => {
+    const { db, data } = queuedDb();
+    const ai = fakeProviders({ reviewIssues: [{ severity: "blocking", field: "faq[3]", message: "Say the walnuts must be labeled gluten-free." }] });
+    expect(await run(db, ai).result).toMatchObject({ status: "failed" });
+    expect([ai.writer.calls(), ai.repairer.calls(), ai.reviewer.calls(), ai.photographer.calls()]).toEqual([0, 0, 1, 0]);
+    expect(data.recipes).toHaveLength(0);
+  });
+
+  it("keeps the daily budget check", async () => {
+    const { db } = queuedDb(rejectedJob(), { spent: 2.95 });
+    const ai = fakeProviders();
+    expect(await run(db, ai).result).toMatchObject({ status: "failed", error: expect.stringMatching(/Daily AI budget reached/) });
+    expect(ai.reviewer.calls()).toBe(0);
+  });
+
+  it("never publishes a corrected draft automatically", async () => {
+    const reviewed = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, title: `Reviewed ${i}`, slug: `reviewed-${i}`, source: "ai", status: "published", approved_at: "2026-10-30T12:00:00Z" }));
+    const { db, data } = queuedDb(rejectedJob(), { settings: { publish_mode: "auto" }, recipes: reviewed });
+    expect(await run(db, fakeProviders(), { requestedMode: "auto" }).result).toMatchObject({ status: "succeeded", mode: "review", published: false });
+    expect(data.recipes.at(-1)?.status).toBe("in_review");
+  });
+
+  it("finishes a job from an earlier day by its id", async () => {
+    const { db, data } = queuedDb(rejectedJob({ job_date: "2026-10-29", idempotency_key: "daily_recipe:2026-10-29" }));
+    const ai = fakeProviders();
+    expect(await run(db, ai, { resumeJobId: "job-fix" }).result).toMatchObject({ status: "succeeded", jobId: "job-fix" });
+    expect(data.publishing_jobs).toHaveLength(1); // no job created for today
+    expect(ai.writer.calls()).toBe(0);
+  });
+
+  it("refuses to resume by id a job without a corrected draft, a dry run, or a finished job", async () => {
+    const plain = queuedDb(rejectedJob({}, { corrected_draft: undefined }));
+    expect(await run(plain.db, fakeProviders(), { resumeJobId: "job-fix" }).result).toMatchObject({ status: "skipped", reason: expect.stringContaining("no corrected draft") });
+
+    const dry = queuedDb();
+    expect(await run(dry.db, fakeProviders(), { resumeJobId: "job-fix", requestedMode: "dry_run", trigger: "manual" }).result).toMatchObject({ status: "skipped" });
+
+    const done = queuedDb(rejectedJob({ status: "succeeded" }));
+    expect(await run(done.db, fakeProviders(), { resumeJobId: "job-fix" }).result).toMatchObject({ status: "skipped" });
+
+    const missing = queuedDb();
+    expect(await run(missing.db, fakeProviders(), { resumeJobId: "nope" }).result).toMatchObject({ status: "skipped", reason: expect.stringContaining("No daily recipe job") });
+  });
+
+  it("never saves a second recipe for the same job", async () => {
+    const { db, data } = queuedDb(rejectedJob(), { recipes: [{ id: "r-old", title: "Something else", slug: "something-else", generation_job_id: "job-fix" }] });
+    const out = await run(db).result;
+    expect(out).toMatchObject({ status: "failed", error: expect.stringContaining("already saved a recipe") });
+    expect(data.recipes).toHaveLength(1);
+  });
+});
+
 describe("runDailyRecipe: dry run", () => {
   it("generates and checks everything but saves no recipe and claims no keyword", async () => {
     const { db, data } = automationDb({ settings: { enabled: false } });

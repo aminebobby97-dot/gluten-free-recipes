@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareAllergens, detectAllergens } from "@/lib/automation/allergens";
+import { compareAllergens, detectAllergens, undeclaredOptionalAllergens } from "@/lib/automation/allergens";
 import { checkConsistency, heatMinutes, maxMinutesIn, ovenTemperaturesF } from "@/lib/automation/consistency";
 import { assertWithinBudget, BudgetExceededError, estimateTextCostUsd, textCostUsd, UnknownPriceError } from "@/lib/automation/cost";
 import { keywordCore, keywordSimilarity, opportunityScore } from "@/lib/automation/keywords";
@@ -74,6 +74,30 @@ describe("compareAllergens", () => {
 
   it("rejects unknown allergen names", () => {
     expect(compareAllergens(["milk", "eggs", "wheat"], muffins.ingredients)[0]).toMatchObject({ severity: "blocking", allergen: "wheat" });
+  });
+});
+
+describe("undeclaredOptionalAllergens", () => {
+  const faq = (text: string) => [{ field: "faq[3]", text }];
+
+  it("blocks a suggested nut add-in without an allergy note", () => {
+    const issues = undeclaredOptionalAllergens(["milk", "eggs"], faq("Can I add mix-ins? Fold in chocolate chips labeled gluten-free or chopped walnuts labeled gluten-free."));
+    expect(issues).toEqual([expect.objectContaining({ severity: "blocking", allergen: "tree_nuts", message: expect.stringContaining("faq[3]") })]);
+  });
+
+  it("accepts the suggestion once it says it adds an allergen", () => {
+    expect(undeclaredOptionalAllergens(["milk"], faq("Fold in chopped walnuts labeled gluten-free (walnuts are a tree-nut allergen; leave them out for a nut-free loaf)."))).toEqual([]);
+    expect(undeclaredOptionalAllergens(["milk"], faq("Use pecans, or sunflower seeds for a nut-free version."))).toEqual([]);
+  });
+
+  it("accepts nuts the allergen list already declares, and ignores other allergens", () => {
+    expect(undeclaredOptionalAllergens(["tree_nuts"], faq("Add chopped walnuts."))).toEqual([]);
+    expect(undeclaredOptionalAllergens([], faq("Top with grated Parmesan cheese."))).toEqual([]);
+    expect(undeclaredOptionalAllergens([], faq("Coconut milk works too."))).toEqual([]);
+  });
+
+  it("covers peanuts", () => {
+    expect(undeclaredOptionalAllergens([], faq("Swirl in peanut butter."))[0]).toMatchObject({ allergen: "peanuts", message: expect.stringContaining("peanut allergen") });
   });
 });
 

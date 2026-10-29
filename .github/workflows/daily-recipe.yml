@@ -21,6 +21,10 @@ on:
         description: "Dry runs only: a keyword to try instead of the next one in the queue (optional)."
         type: string
         required: false
+      resume_job_id:
+        description: "Review runs only: finish this failed job from its corrected draft (see docs/AUTOMATION.md, Recovering a rejected draft). Leave empty normally."
+        type: string
+        required: false
   # schedule:
   #   - cron: "17 13 * * *" # 13:17 UTC every day. Uncomment only after activation is approved.
 
@@ -49,6 +53,7 @@ jobs:
           RUN_MODE: ${{ github.event_name == 'schedule' && 'auto' || inputs.mode }}
           RUN_TRIGGER: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}
           DRY_RUN_KEYWORD: ${{ inputs.keyword }}
+          RESUME_JOB_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.resume_job_id || '' }}
           AUTOMATION_ENABLED: ${{ vars.AUTOMATION_ENABLED || 'false' }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
           SITE_URL: ${{ vars.SITE_URL }}
