@@ -63,7 +63,7 @@ export function detectAllergens(ingredients: Array<Pick<Ingredient, "name" | "no
 }
 
 /** Words that tell a reader a suggestion adds an allergen. */
-const ALLERGY_NOTE = /\ballerg(y|ies|en|ens|ic)\b|\b(tree[- ]nut|peanut)[- ]free\b|\bnut[- ]free\b/i;
+const ALLERGY_NOTE = /\ballerg(y|ies|en|ens|ic)\b|\bnut[- ]free\b|\btree[- ]nuts?\b/i;
 
 /** Allergens readers can add through optional suggestions. Kept to nuts, where a missed note is most dangerous. */
 const OPTIONAL_ALLERGENS: Allergen[] = ["tree_nuts", "peanuts"];

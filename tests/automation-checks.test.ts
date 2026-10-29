@@ -88,6 +88,7 @@ describe("undeclaredOptionalAllergens", () => {
   it("accepts the suggestion once it says it adds an allergen", () => {
     expect(undeclaredOptionalAllergens(["milk"], faq("Fold in chopped walnuts labeled gluten-free (walnuts are a tree-nut allergen; leave them out for a nut-free loaf)."))).toEqual([]);
     expect(undeclaredOptionalAllergens(["milk"], faq("Use pecans, or sunflower seeds for a nut-free version."))).toEqual([]);
+    expect(undeclaredOptionalAllergens(["milk"], faq("Add chopped walnuts labeled gluten-free. Walnuts are a tree nut, so skip them if needed."))).toEqual([]);
   });
 
   it("accepts nuts the allergen list already declares, and ignores other allergens", () => {
