@@ -29,7 +29,7 @@ describe("OpenAI photographer", () => {
     expect([meta.format, meta.width, meta.height]).toEqual(["webp", 1536, 1024]);
     // 300 text tokens at $2.50/M + 6,000 output tokens at $15/M
     expect(result.costUsd).toBeCloseTo(0.0908, 6);
-    expect(result).toMatchObject({ provider: "openai", promptVersion: "photo-v1" });
+    expect(result).toMatchObject({ provider: "openai", promptVersion: "photo-v2" });
   });
 
   it("makes the Pinterest image a 1000x1500 portrait", async () => {
@@ -102,5 +102,39 @@ describe("site refresher", () => {
     const fakeFetch = (async () => new Response(null, { status: 308, headers: { location: "https://www.glutenfreerecipehub.com/api/internal/revalidate" } })) as typeof fetch;
     const site = createSiteRefresher("https://gluten-free-recipes.vercel.app", "s".repeat(40), fakeFetch);
     await expect(site.revalidate("x")).rejects.toThrow(/redirected \(HTTP 308 to https:\/\/www\.glutenfreerecipehub\.com/);
+  });
+});
+
+describe("imagePrompt: simple, believable compositions", () => {
+  const pizza = () => goodRecipe({ title: "Gluten-Free Pizza Crust", image_brief: "A golden pizza crust on folded parchment, one edge lifted to show the browned underside, with a pizza cutter." });
+
+  it("shoots flat dishes like a pizza crust from directly overhead", () => {
+    const prompt = imagePrompt({ recipe: pizza(), orientation: "landscape" });
+    expect(prompt).toMatch(/directly overhead/);
+    expect(imagePrompt({ recipe: goodRecipe(), orientation: "landscape" })).toMatch(/30 to 45 degree angle/);
+  });
+
+  it("rules out the compositions image models get wrong, over whatever the brief asked for", () => {
+    const prompt = imagePrompt({ recipe: pizza(), orientation: "landscape" });
+    expect(prompt).toMatch(/nothing folded, rolled, lifted, cut away or tilted to show an underside/);
+    expect(prompt).toMatch(/No parchment or paper shapes, no utensils touching, cutting or lying on the food/);
+    expect(prompt).toMatch(/golden brown with a realistic dry, matte surface; no melted cheese/);
+    expect(prompt).toMatch(/conflicts with these composition rules, follow these rules/);
+    // The rules come after the brief, so they have the last word.
+    expect(prompt.indexOf("follow these rules")).toBeGreaterThan(prompt.indexOf("folded parchment"));
+  });
+
+  it("names the earlier rejection reasons, once each, only on a retry", () => {
+    expect(imagePrompt({ recipe: pizza(), orientation: "landscape" })).not.toMatch(/rejected/);
+    const prompt = imagePrompt({ recipe: pizza(), orientation: "landscape", avoid: ["Impossible parchment geometry.", "Distorted pizza cutter.", "Impossible parchment geometry."] });
+    expect(prompt).toContain("An earlier photo of this dish was rejected for these problems; make sure none of them appears: Impossible parchment geometry. Distorted pizza cutter.");
+    expect(prompt.match(/Impossible parchment geometry/g)).toHaveLength(1);
+  });
+
+  it("caps how many earlier problems it repeats", () => {
+    const avoid = Array.from({ length: 10 }, (_, i) => `Problem ${i + 1}.`);
+    const prompt = imagePrompt({ recipe: pizza(), orientation: "landscape", avoid });
+    expect(prompt).toContain("Problem 10.");
+    expect(prompt).not.toContain("Problem 4.");
   });
 });

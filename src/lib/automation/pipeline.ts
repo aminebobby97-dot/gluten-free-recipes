@@ -283,9 +283,14 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
     // One landscape photo for the site. The Pinterest Pin is drawn from this same
     // photo when the recipe is published (src/lib/services/pinterest.ts), so no
     // second AI image is generated.
+    // Each rejected photo's problems go into the next attempt's prompt, so a
+    // retry steers away from them instead of repeating them. The checker itself
+    // is never relaxed.
     const takePhoto = async (attempts: number): Promise<StoredImage> => {
+      const rejections: string[][] = [];
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const { result: shot, attemptId } = await callAi("image", providers.photographer, { recipe, orientation: "landscape" }, attempt);
+        const avoid = rejections.flat();
+        const { result: shot, attemptId } = await callAi("image", providers.photographer, { recipe, orientation: "landscape", ...(avoid.length ? { avoid } : {}) }, attempt);
         const { result: check } = await callAi("image_check", providers.photoChecker, { recipe, photo: shot.output }, attempt);
         if (check.output.ok) {
           const ext = shot.output.mimeType.split("/")[1];
@@ -294,14 +299,16 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
           const url = await opts.images.upload(path, shot.output);
           return { path, url, alt: recipe.image_alt };
         }
+        const problems = check.output.problems.length ? check.output.problems : ["The photo checker rejected it without giving a reason."];
+        rejections.push(problems);
         await markAttempt(
           db,
           attemptId,
           "rejected",
-          check.output.problems.map((p) => ({ severity: "blocking", source: "photo", field: "featured_image", message: p })),
+          problems.map((p) => ({ severity: "blocking", source: "photo", field: "featured_image", message: p })),
         );
       }
-      throw new PipelineError(`No acceptable photo after ${attempts} attempts.`);
+      throw new PipelineError(photoFailureMessage(rejections), rejections.flat().map((p) => ({ severity: "blocking", source: "photo", field: "featured_image", message: p })));
     };
 
     const image = await step("generate_photo", async () => {
@@ -419,6 +426,13 @@ export async function releaseStaleKeywords(db: SupabaseClient, today: string): P
     closed++;
   }
   return closed;
+}
+
+/** "No acceptable photo after 3 attempts. Attempt 1: …; …. Attempt 2: …" kept short enough for the job log. */
+export function photoFailureMessage(rejections: string[][]): string {
+  const clip = (s: string) => (s.length > 200 ? `${s.slice(0, 197)}...` : s);
+  const parts = rejections.map((problems, i) => `Attempt ${i + 1}: ${problems.map((p) => clip(p.trim().replace(/[.\s]+$/, ""))).join("; ")}.`);
+  return `No acceptable photo after ${rejections.length} attempts. ${parts.join(" ")}`.slice(0, 1900);
 }
 
 async function finishJob(db: SupabaseClient, jobId: string, step: string) {

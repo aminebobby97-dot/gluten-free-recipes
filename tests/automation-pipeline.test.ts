@@ -201,6 +201,49 @@ describe("runDailyRecipe: failures never publish", () => {
     expect(data.publishing_jobs[0].cost_usd).toBe(0.03);
   });
 
+  it("tells each new photo attempt what the checker rejected before, and keeps the check strict", async () => {
+    const { db, data } = automationDb();
+    const ai = fakeProviders({
+      photoOk: [false, false, false],
+      photoProblems: [
+        ["Crust looks covered in melted cheese.", "Unrealistic folded crust."],
+        ["Physically impossible parchment geometry.", "Distorted pizza cutter."],
+        ["Cheese-like crust surface."],
+      ],
+    });
+    const { result } = run(db, ai);
+    const outcome = await result;
+
+    // Attempt 1 has nothing to avoid; each later one carries every earlier problem.
+    expect(ai.photographer.inputs.map((i) => i.avoid)).toEqual([
+      undefined,
+      ["Crust looks covered in melted cheese.", "Unrealistic folded crust."],
+      ["Crust looks covered in melted cheese.", "Unrealistic folded crust.", "Physically impossible parchment geometry.", "Distorted pizza cutter."],
+    ]);
+    // Every photo was still checked and none was accepted or saved.
+    expect(ai.photoChecker.calls()).toBe(3);
+    expect(data.recipes).toHaveLength(0);
+    // The reasons reach the job and the GitHub run summary.
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(outcome.status === "failed" && outcome.error).toBe(
+      "No acceptable photo after 3 attempts. Attempt 1: Crust looks covered in melted cheese; Unrealistic folded crust. Attempt 2: Physically impossible parchment geometry; Distorted pizza cutter. Attempt 3: Cheese-like crust surface.",
+    );
+    expect(data.publishing_jobs[0].error_message).toContain("Attempt 2: Physically impossible parchment geometry");
+    const rejected = data.generation_attempts.filter((a) => a.kind === "image" && a.status === "rejected");
+    expect(rejected.map((a) => (a.issues as Array<{ message: string }>).map((i) => i.message))).toEqual([
+      ["Crust looks covered in melted cheese.", "Unrealistic folded crust."],
+      ["Physically impossible parchment geometry.", "Distorted pizza cutter."],
+      ["Cheese-like crust surface."],
+    ]);
+  });
+
+  it("stops asking to avoid problems once a photo passes", async () => {
+    const { db } = automationDb();
+    const ai = fakeProviders({ photoOk: [false, true], photoProblems: [["Distorted pizza cutter."]] });
+    expect((await run(db, ai).result).status).toBe("succeeded");
+    expect(ai.photographer.inputs.map((i) => i.avoid)).toEqual([undefined, ["Distorted pizza cutter."]]);
+  });
+
   it("fails without saving when no site photo passes the check", async () => {
     const { db, data } = automationDb();
     const ai = fakeProviders({ photoOk: [false, false, false] });
