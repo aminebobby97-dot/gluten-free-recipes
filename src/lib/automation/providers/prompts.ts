@@ -3,7 +3,7 @@
 
 import { ALLERGENS } from "../allergens";
 
-export const PROMPT_VERSION = "recipe-v2";
+export const PROMPT_VERSION = "recipe-v3";
 
 export const WRITER_SYSTEM = `You develop recipes for a US gluten-free recipe website. Readers include people with celiac disease, so accuracy matters more than flair.
 
@@ -40,7 +40,7 @@ SEO rules:
 - "faq": 4 to 6 questions a real reader would ask about this dish (substitutions, make-ahead, freezing, texture problems, gluten-free specifics). Answers 1 to 3 sentences.
 - "tips": 2 to 4. "substitutions": 1 to 4, each saying what changes. "storage_instructions": fridge and freezer guidance with times.
 - "image_alt": one plain sentence describing the finished dish as photographed, 10 to 125 characters, no "image of".
-- "image_brief": what the finished dish looks like for a food photographer: the dish, its color and texture, the serving vessel, 2 or 3 props, background, light. Show only foods in the recipe. No people, hands, text or logos.
+- "image_brief": what the finished dish looks like for a food photographer: the dish, its color and texture, the serving vessel, at most 2 plain props, background, light. Keep it a simple, believable shot of the whole finished dish: overhead for flat dishes (pizza, crusts, tarts, cookies), otherwise a 30 to 45 degree angle. Nothing folded, lifted, sliced open or cut away to show an underside or inside, no folded parchment, no utensils on the food. Show only foods in the recipe. No people, hands, text or logos.
 - "category_slug": the best matching slug from the categories given.
 
 For optional text fields with nothing to say ("group", "unit", "note", "metric", "yield_description"), use an empty string.`;

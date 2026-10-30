@@ -8,7 +8,7 @@ import { AiCallError, type AiStep, type Photo, type PhotoOrientation, type Photo
 import { roughTokens } from "./anthropic";
 
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
-export const IMAGE_PROMPT_VERSION = "photo-v1";
+export const IMAGE_PROMPT_VERSION = "photo-v2";
 
 /**
  * OpenAI list prices (USD per million tokens) from developers.openai.com/api/docs/pricing,
@@ -44,15 +44,32 @@ export interface ImageClient {
   };
 }
 
-export function imagePrompt({ recipe, orientation }: PhotoRequest): string {
+/** Flat dishes look best, and most realistic, from directly above. */
+const FLAT_DISH = /\b(pizza|crust|flatbread|focaccia|tart|galette|quiche|pie|cookies?|pancakes?|crepes?|tortillas?|naan|socca|frittata|sheet[- ]pan|bars?|brownies?|blondies?)\b/i;
+
+/** The most earlier problems repeated in the prompt, newest first. */
+const MAX_AVOID = 6;
+
+export function imagePrompt({ recipe, orientation, avoid = [] }: PhotoRequest): string {
   const frame = orientation === "portrait" ? "Vertical 2:3 composition with the dish in the lower two thirds." : "Horizontal 3:2 composition with the dish slightly off center.";
+  const angle = FLAT_DISH.test(recipe.title)
+    ? "Camera directly overhead (top-down flat lay), the whole dish in view on a plain board, baking sheet or plate."
+    : "Camera at a natural 30 to 45 degree angle, the whole dish in view on a plain plate, board or baking dish.";
+  const lessons = [...new Set(avoid.map((p) => p.trim()).filter(Boolean))].slice(-MAX_AVOID);
   return [
     `Realistic editorial food photograph of ${recipe.title}.`,
     recipe.image_brief,
     `It contains only these foods: ${recipe.ingredients.map((i) => i.name).join(", ")}.`,
     frame,
-    "Shot on a full-frame camera with a 50mm lens, natural window light, shallow depth of field, true-to-life colors and textures, appetizing but not glossy or oversaturated.",
+    angle,
+    // Simple scenes are what image models render believably; these rules win over the brief.
+    "Keep the scene simple: one dish, at most two plain props, nothing folded, rolled, lifted, cut away or tilted to show an underside or a hidden side.",
+    "No parchment or paper shapes, no utensils touching, cutting or lying on the food.",
+    "Baked doughs and crusts are evenly golden brown with a realistic dry, matte surface; no melted cheese, sauce or toppings that are not in the ingredient list.",
+    "If anything above conflicts with these composition rules, follow these rules.",
+    "Shot on a full-frame camera with a 50mm lens, natural window light, true-to-life colors and textures, appetizing but not glossy or oversaturated.",
     "No people, no hands, no text, no labels, no logos, no watermarks. No bread, pasta, crackers or pastries that are not part of this recipe.",
+    ...(lessons.length ? [`An earlier photo of this dish was rejected for these problems; make sure none of them appears: ${lessons.join(" ")}`] : []),
   ].join(" ");
 }
 

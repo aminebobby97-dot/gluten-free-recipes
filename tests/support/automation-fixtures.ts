@@ -1,7 +1,7 @@
 // Shared fixtures for the automation pipeline tests: a recipe that passes every
 // check, fake AI providers and a fake database with the Phase 2 functions.
 
-import type { AiProviders, GeneratedRecipe, ImageStore, Photo, SiteRefresher } from "@/lib/automation/types";
+import type { AiProviders, GeneratedRecipe, ImageStore, Photo, PhotoRequest, SiteRefresher } from "@/lib/automation/types";
 import { createFakeDb } from "./fake-db";
 
 export const CATEGORY = { id: "0b5c3c1e-7c2a-4f7e-9d0a-1a2b3c4d5e6f", slug: "gluten-free-baking", name: "Gluten-Free Baking", sort_order: 50 };
@@ -60,25 +60,29 @@ export function goodRecipe(overrides: Partial<GeneratedRecipe> = {}): GeneratedR
 
 const ai = <I, O>(model: string, output: (input: I, call: number) => O, cost = 0.1) => {
   let calls = 0;
+  const inputs: I[] = [];
   const step = {
     calls: () => calls,
+    /** What each call was given, in order. */
+    inputs,
     estimateUsd: () => cost * 2,
     run: async (input: I) => {
       calls++;
+      inputs.push(input);
       return { output: output(input, calls), provider: "fake", model, promptVersion: "test", costUsd: cost, inputTokens: 100, outputTokens: 200 };
     },
   };
   return step;
 };
 
-export function fakeProviders(opts: { drafts?: unknown[]; reviewIssues?: Array<{ severity: "blocking" | "warning"; field: string; message: string }>; photoOk?: boolean[] } = {}) {
+export function fakeProviders(opts: { drafts?: unknown[]; reviewIssues?: Array<{ severity: "blocking" | "warning"; field: string; message: string }>; photoOk?: boolean[]; photoProblems?: string[][] } = {}) {
   const drafts = opts.drafts ?? [goodRecipe()];
   const photo: Photo = { data: new Uint8Array([1, 2, 3]), mimeType: "image/webp" };
   const writer = ai("fake-writer", (_i, n) => drafts[Math.min(n - 1, drafts.length - 1)], 0.2);
   const repairer = ai("fake-writer", (_i, n) => drafts[Math.min(n, drafts.length - 1)], 0.2);
   const reviewer = ai("fake-reviewer", () => ({ issues: opts.reviewIssues ?? [] }), 0.1);
-  const photographer = ai("fake-image", () => photo, 0.05);
-  const photoChecker = ai("fake-checker", (_i, n) => ({ ok: opts.photoOk ? opts.photoOk[n - 1] ?? true : true, problems: ["Shows a wheat bagel."] }), 0.02);
+  const photographer = ai<PhotoRequest, Photo>("fake-image", () => photo, 0.05);
+  const photoChecker = ai("fake-checker", (_i, n) => ({ ok: opts.photoOk ? opts.photoOk[n - 1] ?? true : true, problems: opts.photoProblems?.[n - 1] ?? ["Shows a wheat bagel."] }), 0.02);
   const providers: AiProviders = { writer, repairer, reviewer, photographer, photoChecker };
   return { providers, writer, repairer, reviewer, photographer, photoChecker };
 }

@@ -6,6 +6,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dbError } from "@/lib/services/errors";
+import { JOB_RECIPE } from "./admin";
 
 /** PostgREST / Postgres codes for a table, column or function that does not exist. */
 const MISSING = new Set(["PGRST205", "PGRST202", "PGRST204", "42P01", "42703", "42883"]);
@@ -107,7 +108,7 @@ export interface JobDetail {
 export async function getJobDetail(db: SupabaseClient, id: string): Promise<JobDetail | null> {
   const { data: job, error } = await db
     .from("publishing_jobs")
-    .select("*, recipe:recipes(id,title,status), keyword:keywords(keyword)")
+    .select(`*, recipe:${JOB_RECIPE}(id,title,status), keyword:keywords(keyword)`)
     .eq("id", id)
     .maybeSingle();
   if (error) throw dbError("Load publishing job", error);

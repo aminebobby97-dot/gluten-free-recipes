@@ -97,10 +97,18 @@ export interface AdminJobRow {
   keyword: { keyword: string } | null;
 }
 
+/**
+ * A job's recipe, by publishing_jobs.recipe_id. Since the automation migration
+ * recipes also point back at their job (recipes.generation_job_id), so a plain
+ * `recipes(...)` embed is ambiguous and Supabase refuses it (PGRST201). The
+ * foreign key name says which link to follow.
+ */
+export const JOB_RECIPE = "recipes!publishing_jobs_recipe_id_fkey";
+
 export async function listJobs(db: SupabaseClient, onlyFailed = false): Promise<AdminJobRow[]> {
   let query = db
     .from("publishing_jobs")
-    .select("id,job_type,job_date,status,current_step,error_message,retry_count,created_at,completed_at,recipe:recipes(id,title),keyword:keywords(keyword)")
+    .select(`id,job_type,job_date,status,current_step,error_message,retry_count,created_at,completed_at,recipe:${JOB_RECIPE}(id,title),keyword:keywords(keyword)`)
     .order("job_date", { ascending: false })
     .limit(200);
   if (onlyFailed) query = query.eq("status", "failed");

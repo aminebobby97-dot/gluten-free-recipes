@@ -86,6 +86,8 @@ export interface PhotoRequest {
   recipe: GeneratedRecipe;
   /** Landscape 3:2 for the site, portrait 2:3 for Pinterest. */
   orientation: PhotoOrientation;
+  /** Problems the photo checker found in earlier attempts for this recipe, to steer clear of. */
+  avoid?: string[];
 }
 
 export interface PhotoVerdict {
