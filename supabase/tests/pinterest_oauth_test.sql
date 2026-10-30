@@ -59,13 +59,15 @@ begin
 exception when insufficient_privilege then null;
 end $$;
 
--- 6. The automation worker (service_role) has no access either.
+-- 6. The automation worker (service_role) cannot create or delete the
+-- connection. (After 20261030000001_automatic_pins.sql it may read and refresh
+-- it; see automatic_pins_test.sql.)
 reset role;
 set local role service_role;
 do $$
 begin
-  perform 1 from public.pinterest_connection;
-  raise exception 'service_role can read the Pinterest connection';
+  delete from public.pinterest_connection;
+  raise exception 'service_role can delete the Pinterest connection';
 exception when insufficient_privilege then null;
 end $$;
 

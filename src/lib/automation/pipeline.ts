@@ -53,8 +53,9 @@ export interface PipelineOptions {
   resumeJobId?: string;
   /**
    * Prepares the recipe's Pinterest Pin after an automatic publish (image and
-   * text saved for review, never posted). Optional and never fatal: a Pin
-   * problem is logged and the published recipe stays as it is.
+   * text). Posting it is a separate step (src/lib/automation/pins.ts) after the
+   * page is confirmed live. Optional and never fatal: a Pin problem is logged
+   * and the published recipe stays as it is.
    */
   preparePin?: (recipeId: string, jobId: string) => Promise<void>;
   now?: Date;
@@ -135,6 +136,10 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
   const resolved = await resolveMode(db, settings, opts);
   if (typeof resolved !== "string") return { status: "skipped", reason: resolved.skip };
   let mode: RunMode = resolved;
+  if (mode !== "dry_run") {
+    // Housekeeping only: a problem here never stops the day's recipe.
+    await releaseStaleKeywords(db, toJobDate(now)).catch((err: unknown) => console.error(`Could not release stale keywords: ${err instanceof Error ? err.message : String(err)}`));
+  }
 
   // --- Job -------------------------------------------------------------------
   let job: PublishingJob | null;
@@ -382,6 +387,38 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
     }
     return { status: "failed", jobId, mode, error: message };
   }
+}
+
+/**
+ * A daily job that failed and was not retried on its own day keeps its keyword
+ * "queued" forever, because the next day starts a new job. Gives those
+ * keywords back to the pool and closes the jobs as cancelled. Jobs carrying a
+ * person's corrected draft are left alone: they can still be resumed by id.
+ * Returns how many jobs were closed.
+ */
+export async function releaseStaleKeywords(db: SupabaseClient, today: string): Promise<number> {
+  const { data, error } = await db
+    .from("publishing_jobs")
+    .select("id, job_date, keyword_id, recipe_id, checkpoint")
+    .eq("job_type", "daily_recipe")
+    .eq("status", "failed")
+    .lt("job_date", today)
+    .not("keyword_id", "is", null)
+    .is("recipe_id", null)
+    .limit(20);
+  if (error) throw dbError("Find unfinished jobs", error);
+  let closed = 0;
+  for (const job of (data ?? []) as Array<{ id: string; job_date: string; keyword_id: string; checkpoint: Checkpoint | null }>) {
+    if (job.checkpoint?.corrected_draft || job.checkpoint?.recipe_id) continue;
+    const reason = `The job of ${job.job_date} failed and was not finished that day, so its keyword was put back in the queue.`;
+    const released = await db.rpc("release_keyword", { p_keyword_id: job.keyword_id, p_reason: reason });
+    if (released.error) throw dbError("Release keyword", released.error);
+    const { error: closeError } = await db.from("publishing_jobs").update({ status: "cancelled", lease_expires_at: null }).eq("id", job.id).eq("status", "failed");
+    if (closeError) throw dbError("Close unfinished job", closeError);
+    await logEvent(db, job.id, "job", "info", reason);
+    closed++;
+  }
+  return closed;
 }
 
 async function finishJob(db: SupabaseClient, jobId: string, step: string) {

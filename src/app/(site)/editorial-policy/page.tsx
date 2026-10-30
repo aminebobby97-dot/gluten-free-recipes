@@ -17,15 +17,33 @@ export default function EditorialPolicyPage() {
       </p>
       <h2>How recipes are created</h2>
       <p>
-        Recipes are based on established gluten-free cooking and baking techniques. Some are drafted with the help of
-        software, including AI writing tools.
+        Recipes are based on established gluten-free cooking and baking techniques. Many are written by AI: a large
+        language model drafts the recipe from a search topic we choose, and software checks it before it can appear on the
+        site.
       </p>
+      <h2>Automated quality checks</h2>
+      <p>Before an AI-written recipe is published, it must pass every one of these checks:</p>
+      <ul>
+        <li>
+          Gluten: no wheat, barley, rye or other gluten-containing ingredients, and a note to choose products labeled
+          gluten-free wherever an ingredient often hides gluten or picks it up through cross-contact.
+        </li>
+        <li>Allergens: the major allergens in the ingredient list are declared.</li>
+        <li>
+          Consistency: every ingredient is used in the steps, the times add up, and oven and food-safety temperatures are
+          in a sensible range.
+        </li>
+        <li>Duplicates: it is not a copy of, or too close to, a recipe already on the site.</li>
+        <li>
+          An independent review by a second AI model, which reads the recipe as an editor would and looks for errors in
+          ingredients, quantities, temperatures and food-safety steps.
+        </li>
+      </ul>
       <p>
-        Before an AI-drafted recipe can be published, it must pass automated checks for gluten-containing ingredients,
-        cross-contact risks, allergens, food-safety temperatures, and agreement between the ingredient list, the steps and
-        the cooking times. A second, independent AI model then reviews it as an editor would. A recipe that fails any check
-        is not published. A person reviews AI-drafted recipes, with particular attention to ingredients, measurements,
-        temperatures and food-safety steps.
+        A recipe that fails any check is not published. A person reviewed and approved the first AI-written recipes on
+        this site before they were published. Since then, AI-written recipes that pass every check are published
+        automatically, without a person reading each one first. We read published recipes and correct them when we find
+        or are told about a problem.
       </p>
       <h2>Photos</h2>
       <p>

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { preparePinAction, publishPinAction, savePinAction } from "@/app/admin/actions";
+import { checkPinAction, preparePinAction, publishPinAction, savePinAction } from "@/app/admin/actions";
 import { ActionForm } from "@/components/admin/action-form";
 import { SubmitButton } from "@/components/admin/submit-button";
 import { Notice, PageHeader, Panel, StatusBadge, formatDateTime } from "@/components/admin/ui";
@@ -69,6 +69,20 @@ export default async function AdminPinPage({ params }: PageProps<"/admin/pintere
             )}
           </div>
           {pin.publication_status === "ready" && <PublishPanel pin={pin} connection={connection.installed ? connection.connection : null} />}
+          {pin.publication_status === "publishing" && (
+            <div className="space-y-3 rounded-2xl border border-line bg-card p-4 text-sm">
+              <p className="font-medium text-ink">Waiting for Pinterest’s answer</p>
+              <p className="text-ink-soft">
+                A publish attempt did not get an answer, so the Pin may or may not exist. It is never posted again until it has been looked up on your
+                board. The daily run does this automatically; you can also check now.
+              </p>
+              <ActionForm action={checkPinAction} hidden={{ id: pin.id }}>
+                <SubmitButton className="btn btn-secondary w-full" pendingLabel="Checking…">
+                  Check Pinterest
+                </SubmitButton>
+              </ActionForm>
+            </div>
+          )}
           {!locked && recipeId && (
             <div className="space-y-3">
               <ActionForm action={preparePinAction} hidden={{ recipe_id: recipeId, mode: "redraw" }}>
@@ -160,7 +174,7 @@ function PublishPanel({ pin, connection }: { pin: AdminPinDetail; connection: Pi
       ) : (
         <ActionForm action={publishPinAction} hidden={{ id: pin.id }} className="space-y-3">
           <p className="text-ink-soft">
-            Posts this one Pin to <strong>“{connection!.selected_board_name}”</strong> as @{connection!.pinterest_username ?? "your account"}. With Trial access, only you can see it on Pinterest.
+            Posts this one Pin to <strong>“{connection!.selected_board_name}”</strong> as @{connection!.pinterest_username ?? "your account"}.
           </p>
           <label className="flex items-start gap-2">
             <input type="checkbox" name="ai_modified" value="yes" defaultChecked={pin.recipe?.image_source === "ai"} className="mt-1" />

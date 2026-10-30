@@ -1,5 +1,5 @@
 // Minimal in-memory stand-in for the parts of the Supabase query builder used
-// by the publishing services. Supports eq/neq filters, insert, update, upsert
+// by the publishing services. Supports eq/neq/lt/lte/in/is filters, insert, update, upsert
 // (with ignoreDuplicates), single/maybeSingle and head-only counts.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -50,6 +50,8 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
       delete: () => ((op = "delete"), calls.push({ table, op }), builder),
       eq: (col: string, val: unknown) => (filters.push((r) => r[col] === val), builder),
       neq: (col: string, val: unknown) => (filters.push((r) => r[col] !== val), builder),
+      lt: (col: string, val: unknown) => (filters.push((r) => (r[col] as string | number) < (val as string | number)), builder),
+      lte: (col: string, val: unknown) => (filters.push((r) => (r[col] as string | number) <= (val as string | number)), builder),
       in: (col: string, vals: unknown[]) => (filters.push((r) => vals.includes(r[col])), builder),
       is: (col: string, val: unknown) => (filters.push((r) => (r[col] ?? null) === val), builder),
       not: (col: string, operator: string, val: unknown) => {

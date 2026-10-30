@@ -42,5 +42,5 @@ These take a Supabase client as an argument, so the admin uses the signed-in use
 
 1. Implement `RecipeGenerator` and `ImageGenerator`, and a real `PinterestPublisher` with OAuth tokens stored server-side.
 2. Add an authenticated trigger (for example a Vercel Cron route that checks `CRON_SECRET`) that calls `runDailyPublishing` with the service-role client.
-3. Decide on human review: the current editorial policy says a person reviews every recipe before publication.
+3. Decide on human review: the editorial policy now explains that the first AI recipes were reviewed by a person and later ones are published automatically after every check passes.
 4. Make retries resume from the recorded step instead of stopping when a job already created a recipe.

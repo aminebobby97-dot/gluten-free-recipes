@@ -37,7 +37,9 @@ export default async function AdminPinterestPage({ searchParams }: PageProps<"/a
       <ConnectResult code={connectResult} />
       <PinterestConnectionPanel installed={connection.installed} connection={connection.installed ? connection.connection : null} />
       <Notice>
-        Automatic Pinterest publishing is <strong>off</strong>. Pins are prepared for review; a Pin is sent to Pinterest only when you open it and click <strong>Publish Pin</strong>, one at a time.
+        Pins of recipes you publish yourself are sent to Pinterest only when you open them and click <strong>Publish Pin</strong>. Pins of recipes the daily run
+        publishes in Automatic mode are posted by that run once the recipe page is live, but only when <strong>Post Pins to Pinterest automatically</strong> is on
+        under <Link href="/admin/automation" className="underline">Automation</Link>.
       </Notice>
 
       {missing.length > 0 && (

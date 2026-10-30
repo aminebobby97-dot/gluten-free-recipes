@@ -1,6 +1,9 @@
 # Pinterest Pins: preparation and review
 
-Every published recipe gets a Pinterest Pin prepared automatically and saved for you to review in **Admin → Pinterest**. **Nothing is posted to Pinterest automatically.** After you connect your Pinterest account (see [Connecting your Pinterest account](#connecting-your-pinterest-account)), you can publish a Ready Pin yourself, one at a time, with its **Publish Pin** button.
+Every published recipe gets a Pinterest Pin prepared automatically and saved in **Admin → Pinterest**. After you connect your Pinterest account (see [Connecting your Pinterest account](#connecting-your-pinterest-account)), a Ready Pin is posted in one of two ways:
+
+- **By you:** open it and click **Publish Pin**. This is how Pins of recipes you publish yourself are posted.
+- **By the daily run:** for recipes the daily run publishes in Automatic mode, when **Post Pins to Pinterest automatically** is on in Admin → Automation. The run posts the Pin only after the recipe page is confirmed live. See [Automatic Pins](#automatic-pins).
 
 ## How it works
 
@@ -20,7 +23,7 @@ It is safe to repeat: each recipe has at most one Pin (the database refuses a se
 | Pending | Being prepared |
 | Ready | Image and text prepared, waiting for your review |
 | Failed | Could not be prepared; the reason is shown on the Pin |
-| Publishing | Being sent to Pinterest right now (after you clicked Publish Pin) |
+| Publishing | Being sent to Pinterest right now, or the last attempt got no answer (see [When Pinterest does not answer](#when-pinterest-does-not-answer)) |
 | Published | Posted to Pinterest; the Pin page links to it |
 
 ## Setup (one time)
@@ -64,7 +67,7 @@ The destination URL is always the recipe's page on the live site. It updates aut
 
 ## Connecting your Pinterest account
 
-This connects your own Pinterest Business account with the official Pinterest API v5, so the dashboard can read your boards and publish a Pin when you click **Publish Pin**. Nothing is ever posted automatically, on a schedule, or in bulk.
+This connects your own Pinterest Business account with the official Pinterest API v5, so the dashboard can read your boards and publish a Pin when you click **Publish Pin**, and the daily run can post the Pins of recipes it publishes automatically (only when you switch that on). Nothing is ever posted in bulk.
 
 ### What the site asks Pinterest for
 
@@ -77,18 +80,38 @@ This connects your own Pinterest Business account with the official Pinterest AP
 
 ### How your sign-in is protected
 
-- The Pinterest **App secret** stays in Vercel. It is only used by the server to talk to Pinterest; it never goes to the browser, the database, the logs or GitHub.
-- The **access and refresh tokens** Pinterest returns are encrypted (AES-256-GCM) with `PINTEREST_TOKEN_ENCRYPTION_KEY` before they are saved in Supabase. The database only ever holds the encrypted form (it refuses anything else), and only admins can read that table. The daily automation worker has no access to it at all.
+- The Pinterest **App secret** is kept in Vercel and, for automatic Pins, as an encrypted secret in the GitHub `automation` environment. It is only used by server code to talk to Pinterest; it never goes to the browser, the database or the logs.
+- The **access and refresh tokens** Pinterest returns are encrypted (AES-256-GCM) with `PINTEREST_TOKEN_ENCRYPTION_KEY` before they are saved in Supabase. The database only ever holds the encrypted form (it refuses anything else). Admins can read that table; after the automatic Pins migration, the daily worker can read and refresh it too, but cannot create or delete it. Visitors have no access.
 - When you click **Connect Pinterest**, the site creates a random one-time code (the OAuth "state") and keeps a signed copy in a secure cookie that expires after 10 minutes. When Pinterest sends you back, the site checks the code matches, for the same admin. Anything else is rejected (this blocks cross-site request forgery).
-- Access tokens last 30 days. The site renews them automatically, server-side, when one is used within 3 days of expiring. The renewal token lasts 60 days and is extended every time it is used. If you do not use Pinterest from the dashboard for 60 days, click **Connect Pinterest** again; the dashboard warns you 14 days before.
+- Access tokens last 30 days. The site renews them automatically, server-side, when one is used within 3 days of expiring. The renewal token lasts 60 days and is extended every time it is used. With automatic Pins on, the daily run checks the sign-in every day and renews it when needed, so it stays alive. If it is ever unused for 60 days, or Pinterest rejects it, click **Connect Pinterest** again; the dashboard warns you 14 days before, and the daily run's summary says "Reconnect Pinterest".
 
-### Trial access: what to expect
+### Trial and Standard access
 
-Your Pinterest app has **Trial** access. Pinterest says Pins and boards created with Trial access are **visible only to you** (like a sandbox), and Trial apps get a small number of API calls per day. So:
+With **Trial** access, Pins are visible only to you and Pinterest allows few API calls a day. With **Standard** access (approved for this app in October 2026), Pins are public.
 
-- Publishing a Pin works as a test, but the public will not see it until Pinterest gives your app **Standard** access (request it in Pinterest Developers, under your app).
-- If Pinterest refuses a request (error 403), the Pin goes back to **Ready** and the reason is shown on it. Nothing is retried automatically.
-- If Pinterest does not answer in time, the Pin goes back to **Ready** with a warning: check your Pinterest profile before publishing it again, because the Pin may have been created.
+- If Pinterest refuses a request (for example error 403), the Pin goes back to **Ready** and the reason is shown on it.
+
+### When Pinterest does not answer
+
+If Pinterest times out or has a server error while a Pin is being posted, the Pin may or may not have been created. To make sure it is never posted twice, the Pin **stays in Publishing** with a warning, and nothing posts it again until it has been looked up:
+
+- Click **Check Pinterest** on the Pin's page, or let the next daily run do it. Either one looks through the newest Pins on your board for one linking to the recipe.
+- Found: the Pin is saved as **Published** with its Pinterest id.
+- Not found 10 minutes or more after the attempt: the Pin goes back to **Ready**, and it is safe to publish again.
+- Not found sooner: nothing changes; check again a little later.
+
+## Automatic Pins
+
+When the daily run publishes a recipe in Automatic mode and **Post Pins to Pinterest automatically** is on (Admin → Automation), the same run:
+
+1. Draws the Pin from the recipe photo (as above).
+2. Opens the recipe page on the live site and checks that it answers normally (HTTP 200, at its own address, with the recipe's data). It tries 4 times, 15 seconds apart. If the page is not live, the Pin is **not** posted.
+3. Refreshes the Pinterest sign-in if it expires within 3 days.
+4. Posts the Pin to the board you chose, with Pinterest's AI label when the photo was made with AI, linking to the recipe page.
+
+Each run also catches up: Pins of earlier automatic recipes that are still Ready, Failed or waiting in Publishing are handled first, up to 3 Pins per run. Each Pin gets at most **3 tries**; after that it waits in Admin → Pinterest for you, with the reason. Pins of recipes you published yourself are never posted automatically. Every step is logged on the recipe's job under **Publishing jobs**, and a Pin that was not posted turns the run red so GitHub emails you.
+
+Setup and activation are in [AUTOMATION.md](AUTOMATION.md#full-automation-recipes-and-pins).
 
 ### Setup (one time)
 
@@ -161,13 +184,13 @@ After the database is updated and the variables are set, merge the pull request 
 
 1. Open a Pin with status **Ready**.
 2. In **Publish to Pinterest**, read the Pin once more. Tick the AI label box if the photo was made with AI (it is ticked automatically for AI photos). Tick **I checked this Pin…** and click **Publish Pin**.
-3. The status changes to **Published**, with a **View on Pinterest** link. With Trial access, only you can see the Pin.
+3. The status changes to **Published**, with a **View on Pinterest** link.
 
 ### Disconnecting
 
 **Admin → Pinterest → Disconnect Pinterest** deletes the saved (encrypted) sign-in from the database. Pins already on Pinterest stay there. To remove the app's access on Pinterest's side too, open Pinterest **Settings → Security and logins → Connected apps** (Pinterest's wording may vary) and remove it.
 
-### What stays off
+### What stays off until you switch it on
 
 - Daily recipe automation (`AUTOMATION_ENABLED=false`, `automation_settings.enabled = false`).
-- Automatic Pinterest publishing (`automation_settings.pinterest_enabled = false`). There is no scheduled or bulk publishing code; the worker cannot even read the Pinterest connection.
+- Automatic Pinterest publishing (`automation_settings.pinterest_enabled = false`, the **Post Pins to Pinterest automatically** box). There is no bulk publishing.
