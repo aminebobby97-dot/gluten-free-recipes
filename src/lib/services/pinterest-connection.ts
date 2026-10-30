@@ -1,14 +1,17 @@
-// Pinterest account connection (OAuth, Pinterest API v5) and manual,
-// one-at-a-time Pin publishing.
+// Pinterest account connection (OAuth, Pinterest API v5) and one-at-a-time
+// Pin publishing.
 //
 // * Tokens are encrypted (AES-256-GCM, key in PINTEREST_TOKEN_ENCRYPTION_KEY)
 //   before they are saved in public.pinterest_connection, which only admins can
-//   read (RLS). The automation worker's service role has no access to that table.
-// * Everything here runs on the server with the signed-in admin's Supabase
-//   client. Nothing returns a token to the caller except getValidAccessToken,
+//   read (RLS), plus the daily worker's service role (read and refresh only,
+//   migration 20261030000001). The encryption key is never in the database.
+// * Everything here runs on the server, with the signed-in admin's Supabase
+//   client or the worker's service-role client. Nothing returns a token to the caller except getValidAccessToken,
 //   which is internal to this module's publishing and board calls.
-// * There is no automatic, scheduled or bulk publishing: publishPin posts the
-//   single Pin an admin clicked, and refuses anything else.
+// * Pins are published one at a time: by an admin's Publish Pin click, or by
+//   the daily worker (src/lib/automation/pins.ts) when automatic Pinterest
+//   publishing is switched on. Both go through publishReadyPin, which never
+//   posts a Pin twice, even after a timeout.
 
 import "server-only";
 import { randomBytes } from "node:crypto";
@@ -343,10 +346,14 @@ export async function disconnectPinterest(db: SupabaseClient): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Manual publishing: one Pin, clicked by an admin
+// Publishing one Pin: an admin's click, or the daily worker in automatic mode
 // ---------------------------------------------------------------------------
 
-type PinForPublishing = PinterestPost & { recipe: { status: string; image_source: string | null } | null };
+export type PublishedVia = "admin" | "automation";
+
+type PinForPublishing = PinterestPost & {
+  recipe: { status: string; image_source: string | null } | null;
+};
 
 export interface PublishPinResult {
   pinterestPinId: string;
@@ -354,17 +361,72 @@ export interface PublishPinResult {
 }
 
 /**
- * Publishes one Ready Pin to the chosen board through the official Create Pin
- * endpoint. The Pin is first claimed (ready → publishing) so a double click
- * cannot post it twice. On failure it goes back to Ready with the reason;
- * nothing is retried automatically.
+ * How long Pinterest gets to show a Pin whose publish answer never arrived
+ * before it is treated as not created. Until then the Pin stays Publishing and
+ * nothing posts it again.
+ */
+export const UNKNOWN_RESULT_WAIT_MINUTES = 10;
+
+/**
+ * The publish request may have reached Pinterest, but no answer came back
+ * (timeout, network error, Pinterest server error). The Pin stays Publishing
+ * so nothing posts it twice; checkPublishingPin settles it.
+ */
+export class PinOutcomeUnknownError extends ServiceError {
+  constructor(message: string) {
+    super("conflict", message);
+    this.name = "PinOutcomeUnknownError";
+  }
+}
+
+/** Compares Pin links the way Pinterest may rewrite them (host case, trailing slash, fragment). */
+export function sameLink(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const norm = (value: string) => {
+    try {
+      const url = new URL(value);
+      return `${url.protocol}//${url.host.toLowerCase().replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "")}${url.search}`;
+    } catch {
+      return value.trim().replace(/\/+$/, "");
+    }
+  };
+  return norm(a) === norm(b);
+}
+
+/**
+ * Publishes one Ready Pin through the manual Publish Pin button. Never retried
+ * automatically.
  */
 export async function publishPin(db: SupabaseClient, pinId: string, userId: string, options: { aiModified: boolean }, deps: PinterestDeps): Promise<PublishPinResult> {
+  return publishReadyPin(db, pinId, { via: "admin", publishedBy: userId, aiModified: options.aiModified }, deps);
+}
+
+/**
+ * Publishes one Ready Pin to the chosen board through the official Create Pin
+ * endpoint. Shared by the admin button and the daily worker.
+ *
+ * Duplicate protection:
+ * * The Pin is first claimed (ready → publishing) so two clicks or two runs
+ *   cannot post it twice.
+ * * A clear refusal from Pinterest puts it back to Ready with the reason.
+ * * When the answer is unknown (timeout, network or server error) the Pin
+ *   STAYS Publishing: it may exist on Pinterest. checkPublishingPin looks for
+ *   it on the board before it can ever be posted again.
+ */
+export async function publishReadyPin(
+  db: SupabaseClient,
+  pinId: string,
+  options: { via: PublishedVia; publishedBy: string | null; aiModified: boolean },
+  deps: PinterestDeps,
+): Promise<PublishPinResult> {
   const { data: pinData, error: pinError } = await db.from("pinterest_posts").select("*, recipe:recipes(status, image_source)").eq("id", pinId).maybeSingle();
   if (pinError) throw dbError("Load Pinterest Pin", pinError);
   const pin = pinData as PinForPublishing | null;
   if (!pin) throw new ServiceError("not_found", "Pin not found.");
   if (pin.publication_status === "published") throw new ServiceError("conflict", "This Pin is already published.");
+  if (pin.publication_status === "publishing") {
+    throw new ServiceError("conflict", "This Pin is already being published, or the last attempt's result is unknown. Use Check Pinterest on the Pin's page.");
+  }
   if (pin.publication_status !== "ready") throw new ServiceError("not_ready", `Only Ready Pins can be published (this one is ${pin.publication_status}).`);
   if (pin.recipe?.status !== "published") throw new ServiceError("not_ready", "The recipe is not published, so its Pin would link to a missing page.");
 
@@ -373,13 +435,14 @@ export async function publishPin(db: SupabaseClient, pinId: string, userId: stri
   const { selected_board_id: boardId, selected_board_name: boardName } = connection.connection;
   if (!boardId || !boardName) throw new ServiceError("not_ready", "Choose the Pinterest board to publish to first (Pinterest page, Board).");
 
-  const request = toCreatePinRequest(pin, boardId, options);
+  const request = toCreatePinRequest(pin, boardId, { aiModified: options.aiModified });
   // Fails early (before claiming the Pin) if the sign-in is unusable.
   let token = await getValidAccessToken(db, deps);
+  const now = () => (deps.now?.() ?? new Date()).toISOString();
 
   const { data: claimed, error: claimError } = await db
     .from("pinterest_posts")
-    .update({ publication_status: "publishing", board_id: boardId, error_message: null })
+    .update({ publication_status: "publishing", board_id: boardId, error_message: null, publish_started_at: now(), published_via: options.via })
     .eq("id", pin.id)
     .eq("publication_status", "ready")
     .select("id")
@@ -387,8 +450,8 @@ export async function publishPin(db: SupabaseClient, pinId: string, userId: stri
   if (claimError) throw dbError("Start publishing the Pin", claimError);
   if (!claimed) throw new ServiceError("conflict", "This Pin is already being published or has changed. Reload the page.");
 
+  let created: { id: string };
   try {
-    let created: { id: string };
     try {
       created = await deps.client.createPin(token, request);
     } catch (err) {
@@ -397,20 +460,79 @@ export async function publishPin(db: SupabaseClient, pinId: string, userId: stri
       token = await getValidAccessToken(db, deps, { force: true });
       created = await deps.client.createPin(token, request);
     }
-    const { error } = await db
-      .from("pinterest_posts")
-      .update({ publication_status: "published", pinterest_pin_id: created.id, published_at: (deps.now?.() ?? new Date()).toISOString(), published_by: userId, board_name: boardName, error_message: null })
-      .eq("id", pin.id);
-    if (error) throw new ServiceError("database", `The Pin was published on Pinterest (id ${created.id}) but could not be marked as published here: ${error.message}. Do not publish it again.`);
-    return { pinterestPinId: created.id, boardName };
   } catch (err) {
-    if (err instanceof ServiceError && err.code === "database") throw err;
-    let message = err instanceof Error ? err.message : String(err);
+    const message = (err instanceof Error ? err.message : String(err)).slice(0, 1500);
     if (err instanceof PinterestApiError && err.uncertain) {
-      message += " The Pin may or may not have been created: check your Pinterest profile before publishing it again.";
+      const unknown = `${message} The Pin may or may not have been created, so it was not posted again. It is checked against your board before any new attempt (Check Pinterest on the Pin's page, or the next daily run).`;
+      await db.from("pinterest_posts").update({ error_message: unknown.slice(0, 2000) }).eq("id", pin.id).eq("publication_status", "publishing");
+      throw new PinOutcomeUnknownError(unknown);
     }
-    await db.from("pinterest_posts").update({ publication_status: "ready", error_message: message.slice(0, 2000) }).eq("id", pin.id).eq("publication_status", "publishing");
+    await db
+      .from("pinterest_posts")
+      .update({ publication_status: "ready", error_message: message, publish_started_at: null })
+      .eq("id", pin.id)
+      .eq("publication_status", "publishing");
     if (err instanceof PinterestApiError && err.needsReconnect) await markNeedsReconnect(db, err.message);
     throw new ServiceError("not_ready", message);
   }
+
+  await markPinPublished(db, pin.id, created.id, boardName, options.publishedBy, now());
+  return { pinterestPinId: created.id, boardName };
+}
+
+async function markPinPublished(db: SupabaseClient, pinId: string, pinterestPinId: string, boardName: string, publishedBy: string | null, at: string) {
+  const { error } = await db
+    .from("pinterest_posts")
+    .update({ publication_status: "published", pinterest_pin_id: pinterestPinId, published_at: at, ...(publishedBy ? { published_by: publishedBy } : {}), board_name: boardName, error_message: null })
+    .eq("id", pinId);
+  if (error) throw new ServiceError("database", `The Pin was published on Pinterest (id ${pinterestPinId}) but could not be marked as published here: ${error.message}. Do not publish it again.`);
+}
+
+export type CheckPinResult =
+  | { outcome: "published"; pinterestPinId: string; message: string }
+  | { outcome: "released"; message: string }
+  | { outcome: "wait"; message: string };
+
+/**
+ * Settles a Pin left in Publishing (unknown answer, or a run that crashed):
+ * looks for a Pin linking to the recipe on the board. Found: saved as
+ * published with Pinterest's id. Not found once Pinterest has had
+ * UNKNOWN_RESULT_WAIT_MINUTES to show it: back to Ready, safe to post. Not
+ * found sooner: left as it is.
+ */
+export async function checkPublishingPin(db: SupabaseClient, pinId: string, deps: PinterestDeps): Promise<CheckPinResult> {
+  const { data, error } = await db.from("pinterest_posts").select("*").eq("id", pinId).maybeSingle();
+  if (error) throw dbError("Load Pinterest Pin", error);
+  const pin = data as PinForPublishing | null;
+  if (!pin) throw new ServiceError("not_found", "Pin not found.");
+  if (pin.publication_status !== "publishing") throw new ServiceError("conflict", `This Pin is ${pin.publication_status}, not waiting for a result.`);
+
+  const connection = await getPinterestConnection(db);
+  if (!connection.installed || !connection.connection) throw new ServiceError("not_ready", "Pinterest is not connected. Click Connect Pinterest first.");
+  const boardId = pin.board_id ?? connection.connection.selected_board_id;
+  const boardName = connection.connection.boards.find((b) => b.id === boardId)?.name ?? pin.board_name;
+  if (!boardId) throw new ServiceError("not_ready", "Choose the Pinterest board first (Pinterest page, Board).");
+
+  const token = await getValidAccessToken(db, deps);
+  const pins = await deps.client.listBoardPins(token, boardId);
+  const match = pins.find((p) => sameLink(p.link, pin.destination_url));
+  const now = deps.now?.() ?? new Date();
+  if (match) {
+    await markPinPublished(db, pin.id, match.id, boardName, null, match.created_at ?? now.toISOString());
+    return { outcome: "published", pinterestPinId: match.id, message: `Found on Pinterest (Pin id ${match.id}); saved as published.` };
+  }
+
+  const started = pin.publish_started_at ? Date.parse(pin.publish_started_at) : 0;
+  const waitedMs = now.getTime() - started;
+  if (waitedMs < UNKNOWN_RESULT_WAIT_MINUTES * 60_000) {
+    const minutes = Math.ceil((UNKNOWN_RESULT_WAIT_MINUTES * 60_000 - waitedMs) / 60_000);
+    return { outcome: "wait", message: `Not on your board yet. Check again in about ${minutes} minute(s) before publishing again.` };
+  }
+  const { error: releaseError } = await db
+    .from("pinterest_posts")
+    .update({ publication_status: "ready", publish_started_at: null, error_message: "The last publish attempt did not create a Pin (checked on your board). It is safe to publish again." })
+    .eq("id", pin.id)
+    .eq("publication_status", "publishing");
+  if (releaseError) throw dbError("Update Pinterest Pin", releaseError);
+  return { outcome: "released", message: "No Pin for this recipe is on your board, so the last attempt did not create one. The Pin is Ready again." };
 }

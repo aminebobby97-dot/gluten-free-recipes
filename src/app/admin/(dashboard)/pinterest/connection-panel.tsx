@@ -61,8 +61,8 @@ export function PinterestConnectionPanel({ installed, connection }: { installed:
         )}
 
         <p className="text-xs text-ink-faint">
-          Your app has Pinterest <strong>Trial</strong> access: Pins it creates are visible only to you, and Pinterest allows only a small number of requests per day. Public
-          publishing needs Standard access, which you request in Pinterest Developers. Nothing is posted automatically: each Pin is published only when you click Publish Pin on it.
+          With Pinterest <strong>Trial</strong> access, Pins are visible only to you; <strong>Standard</strong> access makes them public. Pins are posted when you click
+          Publish Pin on one, or by the daily run when automatic Pins are switched on under Automation. The daily run also keeps this sign-in refreshed.
         </p>
       </div>
     </Panel>

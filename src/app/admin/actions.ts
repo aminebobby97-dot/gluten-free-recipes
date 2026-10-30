@@ -24,6 +24,7 @@ import {
   PINTEREST_CALLBACK_PATH,
   createOAuthState,
   createPinterestDeps,
+  checkPublishingPin,
   disconnectPinterest,
   getPinterestConfig,
   publishPin,
@@ -239,6 +240,7 @@ const automationSettingsSchema = z.object({
   publish_mode: z.enum(["review", "auto"]),
   daily_budget_usd: z.number().min(0.5, "The daily budget must be at least $0.50.").max(100, "The daily budget can be at most $100."),
   max_keyword_difficulty: z.number().min(0).max(100, "Keyword difficulty is between 0 and 100."),
+  pinterest_enabled: z.boolean(),
 });
 
 export async function saveAutomationSettingsAction(_prev: ActionState, form: FormData): Promise<ActionState> {
@@ -248,6 +250,7 @@ export async function saveAutomationSettingsAction(_prev: ActionState, form: For
     publish_mode: text(form, "publish_mode"),
     daily_budget_usd: Number(text(form, "daily_budget_usd")),
     max_keyword_difficulty: Number(text(form, "max_keyword_difficulty")),
+    pinterest_enabled: form.get("pinterest_enabled") === "on",
   });
   if (!parsed.success) {
     return { ok: false, message: "Check the highlighted settings.", issues: parsed.error.issues.map((i) => ({ field: i.path.join("."), message: i.message })) };
@@ -262,7 +265,7 @@ export async function saveAutomationSettingsAction(_prev: ActionState, form: For
 }
 
 // ---------------------------------------------------------------------------
-// Pinterest (Pins are prepared and reviewed here; nothing is posted)
+// Pinterest Pins: prepared and reviewed here (posting is below)
 // ---------------------------------------------------------------------------
 
 function pinDeps(supabase: SupabaseClient): PinPreparationDeps {
@@ -330,7 +333,7 @@ export async function prepareMissingPinsAction(_prev: ActionState, _form: FormDa
 }
 
 // ---------------------------------------------------------------------------
-// Pinterest account connection (OAuth) and manual publishing of one Pin
+// Pinterest account connection (OAuth) and publishing one Pin by hand
 // ---------------------------------------------------------------------------
 
 export async function connectPinterestAction(_prev: ActionState, _form: FormData): Promise<ActionState> {
@@ -390,14 +393,31 @@ export async function disconnectPinterestAction(_prev: ActionState, form: FormDa
   return { ok: true, message: "Pinterest disconnected and the saved sign-in deleted. You can also remove the app under Pinterest settings, Security and logins (Apps)." };
 }
 
-/** Publishes exactly one Ready Pin, after the admin confirms. Never automatic. */
+/** Publishes exactly one Ready Pin, after the admin confirms. */
 export async function publishPinAction(_prev: ActionState, form: FormData): Promise<ActionState> {
   const { supabase, user } = await requireAdmin();
   if (text(form, "confirm") !== "yes") return { ok: false, message: "Tick the box to confirm you want to post this Pin to Pinterest." };
   try {
     const result = await publishPin(supabase, text(form, "id"), user.id, { aiModified: text(form, "ai_modified") === "yes" }, createPinterestDeps());
     revalidatePath("/admin/pinterest", "layout");
-    return { ok: true, message: `Published to “${result.boardName}” on Pinterest (Pin id ${result.pinterestPinId}). With Trial access, only you can see it.` };
+    return { ok: true, message: `Published to “${result.boardName}” on Pinterest (Pin id ${result.pinterestPinId}).` };
+  } catch (error) {
+    revalidatePath("/admin/pinterest", "layout");
+    return failure(error);
+  }
+}
+
+/**
+ * Settles a Pin whose last publish answer never arrived: finds it on the
+ * board (saved as published) or, once Pinterest has had time to show it,
+ * puts it back to Ready.
+ */
+export async function checkPinAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase } = await requireAdmin();
+  try {
+    const result = await checkPublishingPin(supabase, text(form, "id"), createPinterestDeps());
+    revalidatePath("/admin/pinterest", "layout");
+    return { ok: result.outcome !== "wait", message: result.message };
   } catch (error) {
     revalidatePath("/admin/pinterest", "layout");
     return failure(error);

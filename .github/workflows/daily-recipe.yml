@@ -1,11 +1,14 @@
-# Daily recipe worker. Generates one recipe with photos, checks it, and saves
-# it for review (or publishes it, once auto mode is approved).
+# Daily recipe worker. Generates one recipe with its photo, checks it, and
+# saves it for review or, in automatic mode, publishes it and then posts its
+# Pinterest Pin once the recipe page is confirmed live.
 #
 # For now it only runs when started by hand (Actions -> Daily recipe -> Run
 # workflow). The daily schedule stays commented out until James approves
 # activation; even then, nothing runs unless the AUTOMATION_ENABLED variable is
-# "true" AND automation is switched on in the admin dashboard. Dry runs work
-# while automation is off and never save a recipe.
+# "true" AND automation is switched on in the admin dashboard. Pins are only
+# posted automatically when Admin -> Automation also has Automatic mode and
+# "Post Pins automatically" on. Dry runs work while automation is off, never
+# save a recipe and never post a Pin.
 
 name: Daily recipe
 
@@ -13,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "dry_run: test without saving a recipe. review: save a draft for approval. auto: publish (only after 5 approved recipes)."
+        description: "dry_run: test without saving a recipe. review: save a draft for approval. auto: publish, then post its Pin (only after 5 approved recipes)."
         type: choice
         options: [dry_run, review, auto]
         default: dry_run
@@ -26,7 +29,7 @@ on:
         type: string
         required: false
   # schedule:
-  #   - cron: "17 13 * * *" # 13:17 UTC every day. Uncomment only after activation is approved.
+  #   - cron: "0 2 * * *" # 02:00 UTC = 09:00 Asia/Bangkok, every day. Uncomment only after activation is approved.
 
 permissions:
   contents: read
@@ -61,3 +64,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+          # Same values as in Vercel. Used only to post Pins automatically.
+          PINTEREST_APP_ID: ${{ secrets.PINTEREST_APP_ID }}
+          PINTEREST_APP_SECRET: ${{ secrets.PINTEREST_APP_SECRET }}
+          PINTEREST_TOKEN_ENCRYPTION_KEY: ${{ secrets.PINTEREST_TOKEN_ENCRYPTION_KEY }}

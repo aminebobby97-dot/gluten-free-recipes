@@ -28,7 +28,7 @@ export default async function AdminAutomationPage() {
   const autoUnlocked = approvedAiRecipes >= settings.min_reviewed_before_auto;
   const stats = [
     { label: "Automation", value: settings.enabled ? "On" : "Off" },
-    { label: "Mode", value: settings.publish_mode === "auto" && autoUnlocked ? "Automatic" : "Review" },
+    { label: "Mode", value: settings.publish_mode === "auto" && autoUnlocked ? (settings.pinterest_enabled ? "Automatic + Pins" : "Automatic") : "Review" },
     { label: "AI recipes approved", value: `${approvedAiRecipes} / ${settings.min_reviewed_before_auto}` },
     { label: "AI spend today", value: `$${spentTodayUsd.toFixed(2)} / $${settings.daily_budget_usd.toFixed(2)}` },
   ];
@@ -100,7 +100,17 @@ export default async function AdminAutomationPage() {
               </div>
             </div>
 
-            <p className="text-sm text-ink-soft">Pinterest publishing: off until the Pinterest Business account and API access are ready.</p>
+            <label className="flex items-start gap-3">
+              <input type="checkbox" name="pinterest_enabled" defaultChecked={settings.pinterest_enabled} className="mt-1 h-4 w-4" />
+              <span>
+                <span className="font-medium text-ink">Post Pins to Pinterest automatically</span>
+                <span className="field-hint block">
+                  Only in Automatic mode. After a recipe is published and its page is confirmed live, its Pin is posted to the board chosen
+                  in Pinterest settings. Needs the Pinterest secrets in GitHub. When off, Pins wait in Pinterest for you to publish.
+                </span>
+              </span>
+            </label>
+
             <SubmitButton className="btn btn-primary" pendingLabel="Saving…">
               Save settings
             </SubmitButton>
@@ -113,8 +123,9 @@ export default async function AdminAutomationPage() {
             <li>Picks the best unused keyword that is not too similar to an existing recipe.</li>
             <li>Claude writes the recipe. Code checks gluten, allergens, timings, temperatures and SEO.</li>
             <li>A second, independent Claude review looks for errors. Failed drafts get one repair, then are rejected.</li>
-            <li>OpenAI makes a site photo and a Pinterest photo; Claude checks they match the recipe.</li>
+            <li>OpenAI makes the recipe photo; Claude checks it matches the recipe.</li>
             <li>The recipe is saved for your review (or published, in automatic mode).</li>
+            <li>In automatic mode with Pins on: its Pin is drawn from the photo, the page is checked live, then the Pin is posted.</li>
           </ol>
           <p className="mt-4 text-sm text-ink-soft">
             Every step and its cost is logged under{" "}

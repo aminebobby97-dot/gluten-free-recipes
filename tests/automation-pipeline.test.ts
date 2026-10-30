@@ -380,3 +380,31 @@ function brokenInsert(builder: ReturnType<ReturnType<typeof automationDb>["db"][
     insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { message: "insert failed" } }) }) }),
   };
 }
+
+describe("runDailyRecipe: unfinished jobs from earlier days", () => {
+  it("gives back the keyword of a failed job from an earlier day and closes the job", async () => {
+    const { db, data } = automationDb({
+      keywords: [
+        { id: "kw-1", keyword: "gluten free blueberry muffins", status: "new", category_id: null, search_volume: null, keyword_difficulty: null },
+        { id: "kw-old", keyword: "gluten free pancakes", status: "queued", category_id: null, search_volume: null, keyword_difficulty: null },
+      ],
+    });
+    data.publishing_jobs.push(
+      { id: "old-job", job_type: "daily_recipe", job_date: "2026-11-01", status: "failed", keyword_id: "kw-old", recipe_id: null, retry_count: 1, checkpoint: { keyword_id: "kw-old" } },
+      { id: "corrected", job_type: "daily_recipe", job_date: "2026-10-31", status: "failed", keyword_id: "kw-x", recipe_id: null, retry_count: 1, checkpoint: { corrected_draft: {} } },
+    );
+    expect((await run(db).result).status).toBe("succeeded");
+    expect(data.keywords.find((k) => k.id === "kw-old")?.status).toBe("new");
+    expect(data.publishing_jobs.find((j) => j.id === "old-job")?.status).toBe("cancelled");
+    // A job with a person's corrected draft can still be resumed, so it is left alone.
+    expect(data.publishing_jobs.find((j) => j.id === "corrected")?.status).toBe("failed");
+    expect(data.publishing_job_events).toContainEqual(expect.objectContaining({ job_id: "old-job", step: "job", status: "info" }));
+  });
+
+  it("leaves earlier jobs alone during a dry run", async () => {
+    const { db, data } = automationDb({ settings: { enabled: false } });
+    data.publishing_jobs.push({ id: "old-job", job_type: "daily_recipe", job_date: "2026-11-01", status: "failed", keyword_id: "kw-1", recipe_id: null, retry_count: 1, checkpoint: {} });
+    await run(db, fakeProviders(), { requestedMode: "dry_run", trigger: "manual" }).result;
+    expect(data.publishing_jobs.find((j) => j.id === "old-job")?.status).toBe("failed");
+  });
+});

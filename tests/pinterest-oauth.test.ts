@@ -314,7 +314,7 @@ describe("manual publishing of one Pin", () => {
   it("never publishes a Pin twice or one that is not ready", async () => {
     const p = fakePinterest({ "/pins": () => ({ status: 201, body: { id: "1" } }) });
     await expect(publishPin(setup({ publication_status: "published", pinterest_pin_id: "1" }).db, "pin-1", "a", { aiModified: false }, deps(p.fetcher))).rejects.toThrow(/already published/);
-    await expect(publishPin(setup({ publication_status: "publishing" }).db, "pin-1", "a", { aiModified: false }, deps(p.fetcher))).rejects.toThrow(/Only Ready Pins/);
+    await expect(publishPin(setup({ publication_status: "publishing" }).db, "pin-1", "a", { aiModified: false }, deps(p.fetcher))).rejects.toThrow(/already being published/);
     await expect(publishPin(setup({ publication_status: "failed" }).db, "pin-1", "a", { aiModified: false }, deps(p.fetcher))).rejects.toThrow(/Only Ready Pins/);
     await expect(publishPin(setup({ recipe: { status: "draft", image_source: null } }).db, "pin-1", "a", { aiModified: false }, deps(p.fetcher))).rejects.toThrow(/not published/);
     expect(p.calls).toHaveLength(0);
@@ -338,11 +338,14 @@ describe("manual publishing of one Pin", () => {
     expect(p.calls).toHaveLength(1); // no automatic retry
   });
 
-  it("warns that a timed-out request may have created the Pin", async () => {
+  it("keeps a timed-out Pin in Publishing, so it cannot be posted twice", async () => {
     const p = fakePinterest({ "/pins": () => new Error("socket hang up") });
     const t = setup();
     await expect(publishPin(t.db, "pin-1", "admin-1", { aiModified: false }, deps(p.fetcher))).rejects.toThrow(/may or may not have been created/);
-    expect(t.data.pinterest_posts[0].publication_status).toBe("ready");
+    expect(t.data.pinterest_posts[0]).toMatchObject({ publication_status: "publishing", publish_started_at: NOW.toISOString(), published_via: "admin" });
+    // A second click is refused without calling Pinterest.
+    await expect(publishPin(t.db, "pin-1", "admin-1", { aiModified: false }, deps(p.fetcher))).rejects.toThrow(/already being published/);
+    expect(p.calls).toHaveLength(1);
   });
 
   it("refreshes once and retries when Pinterest rejects the access token (401)", async () => {
@@ -358,24 +361,29 @@ describe("manual publishing of one Pin", () => {
   });
 });
 
-describe("no automatic Pinterest publishing", () => {
+describe("where Pins can be posted from", () => {
   function files(dir: string): string[] {
     return readdirSync(dir).flatMap((name) => {
       const path = join(dir, name);
       return statSync(path).isDirectory() ? files(path) : [path];
     });
   }
+  const sources = () => files("src").filter((f) => /\.(ts|tsx)$/.test(f));
 
-  it("the daily automation worker cannot reach the Pinterest connection or API", () => {
-    const workerFiles = [...files("scripts"), ...files("src/lib/automation"), ".github/workflows/daily-recipe.yml"];
-    for (const file of workerFiles) {
-      const source = readFileSync(file, "utf8");
-      expect(source, file).not.toMatch(/pinterest-connection|pinterest-api|publishPin|api\.pinterest\.com/);
-    }
+  it("only the shared publisher calls Pinterest's Create Pin", () => {
+    const callers = sources().filter((f) => /\.createPin\(/.test(readFileSync(f, "utf8")));
+    expect(callers).toEqual([join("src", "lib", "services", "pinterest-connection.ts")]);
   });
 
-  it("publishing is only called from the admin's manual Publish Pin action", () => {
-    const callers = files("src").filter((f) => /\.(ts|tsx)$/.test(f) && /publishPin\(/.test(readFileSync(f, "utf8")));
-    expect(callers.sort()).toEqual([join("src", "app", "admin", "actions.ts"), join("src", "lib", "services", "pinterest-connection.ts")].sort());
+  it("the admin button and the daily worker are the only callers of the publisher", () => {
+    expect(sources().filter((f) => /\bpublishPin\(/.test(readFileSync(f, "utf8"))).sort()).toEqual([join("src", "app", "admin", "actions.ts"), join("src", "lib", "services", "pinterest-connection.ts")].sort());
+    expect(sources().filter((f) => /\bpublishReadyPin\(/.test(readFileSync(f, "utf8"))).sort()).toEqual([join("src", "lib", "automation", "pins.ts"), join("src", "lib", "services", "pinterest-connection.ts")].sort());
+  });
+
+  it("the daily schedule stays switched off", () => {
+    const workflow = readFileSync(".github/workflows/daily-recipe.yml", "utf8");
+    expect(workflow).not.toMatch(/^\s*schedule:/m);
+    expect(workflow).toMatch(/^\s*#\s*schedule:/m);
+    expect(workflow).toMatch(/#\s*- cron: "0 2 \* \* \*"/);
   });
 });

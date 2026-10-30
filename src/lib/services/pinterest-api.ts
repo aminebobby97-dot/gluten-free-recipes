@@ -49,6 +49,12 @@ export interface PinterestBoard {
   pin_count: number | null;
 }
 
+export interface PinterestBoardPin {
+  id: string;
+  link: string | null;
+  created_at: string | null;
+}
+
 /** A failed Pinterest request. `message` is safe to show an admin. */
 export class PinterestApiError extends Error {
   constructor(
@@ -207,6 +213,28 @@ export class PinterestClient {
       if (!bookmark) break;
     }
     return boards;
+  }
+
+  /**
+   * The newest Pins on a board (up to maxPages × 100), with their links. Used
+   * to find out whether a publish whose answer never arrived created the Pin.
+   */
+  async listBoardPins(accessToken: string, boardId: string, maxPages = 3): Promise<PinterestBoardPin[]> {
+    const pins: PinterestBoardPin[] = [];
+    let bookmark: string | null = null;
+    for (let page = 0; page < maxPages; page++) {
+      const query = new URLSearchParams({ page_size: "100" });
+      if (bookmark) query.set("bookmark", bookmark);
+      const body = await this.get(`/boards/${encodeURIComponent(boardId)}/pins?${query.toString()}`, accessToken, "Reading the Pins on your board");
+      for (const item of Array.isArray(body.items) ? body.items : []) {
+        const p = item as Record<string, unknown>;
+        if (typeof p.id !== "string") continue;
+        pins.push({ id: p.id, link: typeof p.link === "string" ? p.link : null, created_at: typeof p.created_at === "string" ? p.created_at : null });
+      }
+      bookmark = typeof body.bookmark === "string" && body.bookmark ? body.bookmark : null;
+      if (!bookmark) break;
+    }
+    return pins;
   }
 
   async createPin(accessToken: string, request: PinterestCreatePinRequest): Promise<{ id: string }> {

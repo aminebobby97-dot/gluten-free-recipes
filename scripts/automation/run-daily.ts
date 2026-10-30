@@ -4,16 +4,20 @@
 //   npm run automation:run
 //
 // Settings come from environment variables (GitHub Actions secrets and
-// variables). Nothing here prints a secret. Exits 1 when the run fails, so the
-// workflow shows red; a skipped run (automation off, already ran today) exits 0.
+// variables). Nothing here prints a secret. Exits 1 when the run fails or a Pin
+// needs a look, so the workflow shows red and GitHub emails you; a skipped run
+// (automation off, already ran today) exits 0.
 
 import { appendFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
-import { runDailyRecipe, type RunMode } from "@/lib/automation/pipeline";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { automaticPinsBlocked, publishAutomaticPins, type AutoPinRun } from "@/lib/automation/pins";
+import { loadSettings, runDailyRecipe, type RunMode } from "@/lib/automation/pipeline";
 import { createAnthropicProviders } from "@/lib/automation/providers/anthropic";
 import { createOpenAiPhotographer } from "@/lib/automation/providers/openai-images";
 import { createSiteRefresher, createSupabaseImageStore } from "@/lib/automation/providers/site";
 import { createPinImageStore, preparePin } from "@/lib/services/pinterest";
+import { PinterestClient } from "@/lib/services/pinterest-api";
+import { getPinterestConfig } from "@/lib/services/pinterest-connection";
 
 const MODES: RunMode[] = ["dry_run", "review", "auto"];
 
@@ -72,7 +76,8 @@ async function main(): Promise<number> {
     runUrl,
     dryRunKeyword: process.env.DRY_RUN_KEYWORD?.trim() || undefined,
     resumeJobId,
-    // Pinterest Pins are only prepared for review (no AI cost, nothing posted).
+    // Draws the Pin right after an automatic publish (no AI cost). Posting it
+    // happens below, after the page is confirmed live.
     preparePin: siteUrl
       ? async (recipeId, jobId) => {
           const result = await preparePin(db, recipeId, { siteUrl, store: createPinImageStore(db) }, { jobId });
@@ -81,13 +86,15 @@ async function main(): Promise<number> {
       : undefined,
   });
 
+  let code = 0;
   switch (result.status) {
     case "skipped":
       summary([`## Daily recipe: skipped`, "", result.reason]);
-      return 0;
+      break;
     case "failed":
       summary([`## Daily recipe: failed (${result.mode})`, "", `Job \`${result.jobId}\``, "", `Error: ${result.error}`]);
-      return 1;
+      code = 1;
+      break;
     case "succeeded":
       summary([
         `## Daily recipe: ${result.published ? "published" : result.mode === "dry_run" ? "dry run complete" : "saved for review"}`,
@@ -97,8 +104,59 @@ async function main(): Promise<number> {
         `- Job: \`${result.jobId}\``,
         result.mode === "review" ? "- Next: approve or edit it in the admin dashboard under Recipes → In review." : "",
       ]);
-      return 0;
+      break;
   }
+
+  // Pinterest: posts the Pins of automatically published recipes (today's and
+  // any earlier one still waiting). Never runs for dry runs, and does nothing
+  // unless automation, Automatic mode and automatic Pinterest publishing are on.
+  if (requestedMode !== "dry_run") {
+    try {
+      const pins = await runAutomaticPins(db, siteUrl);
+      code = Math.max(code, reportPins(pins));
+    } catch (error) {
+      summary([`## Pinterest: could not run`, "", error instanceof Error ? error.message : String(error)]);
+      code = 1;
+    }
+  }
+  return code;
+}
+
+async function runAutomaticPins(db: SupabaseClient, siteUrl: string | undefined): Promise<AutoPinRun> {
+  const settings = await loadSettings(db);
+  const envEnabled = process.env.AUTOMATION_ENABLED === "true";
+  const off = automaticPinsBlocked(settings, envEnabled);
+  if (off) return { status: "skipped", reason: off };
+  if (!siteUrl) return { status: "blocked", reason: "SITE_URL is not set, so Pins cannot link to the recipe.", pins: 0 };
+  const config = getPinterestConfig(process.env);
+  if (!config.ok) return { status: "blocked", reason: `Pinterest is not set up for the worker: ${config.problems.join(" ")} Add the Pinterest secrets to the GitHub automation environment (docs/AUTOMATION.md).`, pins: 0 };
+  return publishAutomaticPins(db, settings, envEnabled, {
+    pinterest: { config: config.config, client: new PinterestClient(config.config.app) },
+    prepare: { siteUrl, store: createPinImageStore(db) },
+  });
+}
+
+/** Writes the Pinterest part of the run summary. Returns 1 when something needs a look. */
+function reportPins(run: AutoPinRun): number {
+  if (run.status === "skipped") {
+    summary([`## Pinterest: not posting automatically`, "", run.reason]);
+    return 0;
+  }
+  if (run.status === "blocked") {
+    summary([`## Pinterest: blocked`, "", run.reason, "", run.pins ? `${run.pins} Pin(s) are waiting and will be posted on the next run once this is fixed.` : ""]);
+    return 1;
+  }
+  if (run.results.length === 0) {
+    summary([`## Pinterest: nothing to post`]);
+    return 0;
+  }
+  const label = { published: "posted", waiting: "result unknown, checked again next run", failed: "not posted" } as const;
+  summary([
+    `## Pinterest`,
+    "",
+    ...run.results.map((r) => `- ${r.recipeTitle}: ${label[r.outcome]}. ${r.message}${r.pinterestPinId ? ` https://www.pinterest.com/pin/${r.pinterestPinId}/` : ""}`),
+  ]);
+  return run.results.every((r) => r.outcome === "published") ? 0 : 1;
 }
 
 main().then(

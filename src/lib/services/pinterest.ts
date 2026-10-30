@@ -1,7 +1,8 @@
 // Pinterest Pin preparation. When a recipe is published, its Pin is prepared
 // (image + text) and stored in pinterest_posts as 'ready' for an admin to
-// review. Nothing here sends anything to Pinterest: posting happens only when
-// an admin clicks "Publish Pin" (see pinterest-connection.ts).
+// review. Nothing here sends anything to Pinterest: posting happens when an
+// admin clicks "Publish Pin", or in the daily worker's automatic mode (see
+// pinterest-connection.ts and src/lib/automation/pins.ts).
 //
 // Shared by the admin dashboard (signed-in admin's client, RLS applies) and the
 // automation worker (service-role client). Safe to call any number of times:
@@ -56,6 +57,9 @@ export interface PinterestPost {
   edited_at: string | null;
   published_at: string | null;
   created_at: string;
+  /** Migration 20261030000001: when the current publish attempt started, and who published. */
+  publish_started_at?: string | null;
+  published_via?: "admin" | "automation" | null;
 }
 
 /** Pins in these states belong to the (future) publisher and are never re-prepared or edited. */
