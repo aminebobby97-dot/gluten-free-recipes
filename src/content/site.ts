@@ -18,9 +18,8 @@ export const footerNav = [
 ] as const;
 
 /**
- * Homepage hero photograph. Upload a landscape food photo (at least 1600px
- * wide) to Supabase Storage or /public and set `src`. Until then the hero shows
- * an illustrated panel instead of a stock or AI image.
+ * Social share image for the homepage metadata (Open Graph / Twitter). The
+ * photo shown in the homepage hero itself is src/content/images/hero-bowl.webp.
  */
 export const heroImage: { src: string | null; alt: string } = {
   src: null,
