@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRightIcon, CategoryGlyph, CheckIcon } from "@/components/icons";
+import heroPhoto from "@/content/images/hero-bowl.webp";
 import { JsonLd } from "@/components/json-ld";
 import { EmptyRecipes, RecipeGrid } from "@/components/recipe/recipe-card";
 import { featuredCategories, heroImage } from "@/content/site";
@@ -38,8 +39,8 @@ export default function HomePage() {
 
 function Hero() {
   return (
-    <section className="relative overflow-hidden border-b border-line">
-      <div className="container-page grid items-center gap-10 py-12 md:py-16 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:py-20">
+    <section className="relative overflow-hidden border-b border-line bg-cream">
+      <div className="container-page grid items-center gap-6 pb-6 pt-12 md:pt-16 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-6 lg:py-10 xl:py-12">
         <div className="max-w-xl">
           <p className="eyebrow">Gluten-free, every day</p>
           <h1 className="mt-4 text-[2.6rem] font-medium leading-[1.05] text-ink sm:text-6xl lg:text-[4.25rem]">
@@ -57,42 +58,29 @@ function Hero() {
             </Link>
           </div>
         </div>
-        <HeroVisual />
+        <HeroPhoto />
       </div>
     </section>
   );
 }
 
-function HeroVisual() {
-  if (heroImage.src) {
-    return (
-      <div className="relative aspect-[5/4] overflow-hidden rounded-[2rem] shadow-lift lg:aspect-[4/5] xl:aspect-[5/5]">
-        <Image src={heroImage.src} alt={heroImage.alt} fill priority sizes="(min-width: 1024px) 45vw, 100vw" className="object-cover" />
-      </div>
-    );
-  }
-  // Illustrated fallback until a real photograph is configured in src/content/site.ts.
+/**
+ * Large food photograph on the right of the hero, on a warm cream surface. Its
+ * edges are feathered (see .hero-photo in globals.css) so it melts into the page.
+ * Static import: Next.js reads its size and builds a blur placeholder, and
+ * serves AVIF/WebP at the right width for each screen.
+ */
+function HeroPhoto() {
   return (
-    <div className="relative aspect-[5/4] overflow-hidden rounded-[2rem] bg-sage-wash lg:aspect-square" role="img" aria-label="Illustration of a set table with gluten-free dishes">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_25%,rgba(255,255,255,0.9),transparent_55%)]" />
-      <div className="absolute left-1/2 top-1/2 aspect-square w-[62%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-card shadow-lift">
-        <div className="absolute inset-[9%] rounded-full border border-line" />
-        <div className="absolute inset-0 grid place-items-center text-sage">
-          <CategoryGlyph slug="gluten-free-breakfast" size={120} strokeWidth={1.1} />
-        </div>
-      </div>
-      <Tile className="left-[6%] top-[8%]" slug="gluten-free-baking" />
-      <Tile className="right-[7%] top-[12%]" slug="gluten-free-desserts" />
-      <Tile className="bottom-[9%] left-[10%]" slug="gluten-free-lunch" />
-      <Tile className="bottom-[7%] right-[9%]" slug="high-protein-gluten-free" />
-    </div>
-  );
-}
-
-function Tile({ slug, className }: { slug: string; className: string }) {
-  return (
-    <div className={`absolute grid h-[19%] w-[19%] place-items-center rounded-2xl bg-cream text-sage-dark shadow-card ${className}`}>
-      <CategoryGlyph slug={slug} size={40} />
+    <div className="relative -mx-5 sm:mx-auto sm:w-full sm:max-w-[40rem] lg:-mr-8 lg:ml-0 lg:max-w-none xl:-mr-12">
+      <Image
+        src={heroPhoto}
+        alt="A gluten-free quinoa bowl with crispy tofu, roasted sweet potatoes, sliced avocado, cherry tomatoes, cucumber, red cabbage, sprouts and spinach in a ceramic bowl, in soft daylight"
+        preload
+        placeholder="blur"
+        sizes="(min-width: 1280px) 680px, (min-width: 1024px) 56vw, (min-width: 640px) 640px, 100vw"
+        className="hero-photo h-auto w-full"
+      />
     </div>
   );
 }
