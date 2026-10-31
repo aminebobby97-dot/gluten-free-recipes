@@ -63,6 +63,8 @@ export class PinterestApiError extends Error {
     public readonly pinterestCode: number | null = null,
     /** True when the request may have reached Pinterest (timeout or server error). */
     public readonly uncertain = false,
+    /** True when Pinterest refused the Pin's destination link (for example as possible spam). */
+    public readonly linkBlocked = false,
   ) {
     super(message);
     this.name = "PinterestApiError";
@@ -96,20 +98,41 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * Pinterest's answer when it refuses a Pin's link, for example "Sorry! We
+ * blocked this link because it may lead to spam." It can come with HTTP 429,
+ * so it must be told apart from a real rate limit.
+ */
+const BLOCKED_LINK = /blocked this (link|url|website|domain)|may lead to spam|link (is|was|has been) blocked|blocked (link|url|domain)/i;
+
+export function isBlockedLinkMessage(text: string): boolean {
+  return BLOCKED_LINK.test(text);
+}
+
 function describe(status: number, body: Record<string, unknown>, action: string): PinterestApiError {
   const code = typeof body.code === "number" ? body.code : null;
   const detail = typeof body.message === "string" ? body.message.slice(0, 300) : typeof body.error_description === "string" ? body.error_description.slice(0, 300) : "";
   const said = detail ? ` Pinterest said: "${detail}"` : "";
-  if (status === 401) return new PinterestApiError(`${action}: Pinterest no longer accepts the saved sign-in. Click Connect Pinterest again.${said}`, status, code);
+  // HTTP status and Pinterest's own error code, e.g. "(HTTP 429, Pinterest code 8)".
+  const ref = `(HTTP ${status}${code !== null ? `, Pinterest code ${code}` : ""})`;
+  if (detail && isBlockedLinkMessage(detail))
+    return new PinterestApiError(
+      `${action}: Pinterest blocked the Pin's link as possible spam ${ref}. This is not a rate limit.${said} The Pin will not be retried automatically. Check the recipe link in Pinterest (claiming your website in Pinterest's settings helps), then publish it by hand from Admin → Pinterest.`,
+      status,
+      code,
+      false,
+      true,
+    );
+  if (status === 401) return new PinterestApiError(`${action}: Pinterest no longer accepts the saved sign-in ${ref}. Click Connect Pinterest again.${said}`, status, code);
   if (status === 403)
     return new PinterestApiError(
-      `${action}: Pinterest refused permission (403).${said} Your app has Trial access, which Pinterest limits; some requests need Standard access. Also check that you connected the Pinterest account that owns the board.`,
+      `${action}: Pinterest refused permission ${ref}.${said} If your app still has Trial access, Pinterest limits some requests until Standard access is approved. Also check that you connected the Pinterest account that owns the board.`,
       status,
       code,
     );
-  if (status === 429) return new PinterestApiError(`${action}: Pinterest's rate limit was reached (Trial apps have a small daily limit). Try again later.${said}`, status, code);
-  if (status >= 500) return new PinterestApiError(`${action}: Pinterest had a server error (${status}). Try again later.${said}`, status, code, true);
-  return new PinterestApiError(`${action}: Pinterest returned an error (${status}).${said}`, status, code);
+  if (status === 429) return new PinterestApiError(`${action}: Pinterest's rate limit was reached ${ref}. Try again later.${said}`, status, code);
+  if (status >= 500) return new PinterestApiError(`${action}: Pinterest had a server error ${ref}. Try again later.${said}`, status, code, true);
+  return new PinterestApiError(`${action}: Pinterest returned an error ${ref}.${said}`, status, code);
 }
 
 export class PinterestClient {

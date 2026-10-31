@@ -194,6 +194,54 @@ describe("automatic Pins: posting", () => {
   });
 });
 
+describe("automatic Pins: Pinterest blocks the link", () => {
+  const SPAM = { status: 429, body: { code: 8, message: "Sorry! We blocked this link because it may lead to spam." } };
+
+  it("does not retry a Pin whose link Pinterest blocked, and shows Pinterest's message and code", async () => {
+    const p = fakePinterest({ "/pins": () => SPAM });
+    const t = setup([pin()]);
+    const run = await publishAutomaticPins(t.db, ON, true, deps(p.fetcher));
+    expect(run).toMatchObject({ status: "done", results: [{ outcome: "failed", linkBlocked: true }] });
+    const saved = t.data.pinterest_posts[0];
+    expect(saved).toMatchObject({ publication_status: "ready", retry_count: MAX_PIN_ATTEMPTS, publish_started_at: null });
+    const message = String(saved.error_message);
+    expect(message).toMatch(/blocked the Pin's link/);
+    expect(message).toContain("HTTP 429, Pinterest code 8");
+    expect(message).toContain("Sorry! We blocked this link because it may lead to spam.");
+    expect(message).not.toMatch(/rate limit was reached|Trial apps/);
+
+    // The next run leaves it alone: no second request to Pinterest.
+    const again = await publishAutomaticPins(t.db, ON, true, deps(p.fetcher));
+    expect(again).toEqual({ status: "done", results: [] });
+    expect(p.created()).toBe(1);
+  });
+
+  it("stops posting other Pins in the same run, without using their tries", async () => {
+    const p = fakePinterest({ "/pins": () => SPAM });
+    const t = setup([
+      pin(),
+      pin({ id: "pin-2", recipe_id: "r2", publishing_job_id: "job-2", created_at: "2026-11-02T02:06:00Z", destination_url: `${URL_}-2` }),
+    ]);
+    const run = await publishAutomaticPins(t.db, ON, true, deps(p.fetcher));
+    expect(run).toMatchObject({ results: [{ pinId: "pin-1", linkBlocked: true }] });
+    expect(p.created()).toBe(1);
+    expect(t.data.pinterest_posts[1]).toMatchObject({ publication_status: "ready", retry_count: 0 });
+    expect(t.data.publishing_job_events.some((e) => e.job_id === "job-2" && e.status === "skipped")).toBe(true);
+  });
+
+  it("still retries a genuine rate limit on the next run, labelled as a rate limit", async () => {
+    const p = fakePinterest({ "/pins": () => ({ status: 429, body: { code: 8, message: "Too many requests" } }) });
+    const t = setup([pin()]);
+    const run = await publishAutomaticPins(t.db, ON, true, deps(p.fetcher));
+    expect(run).toMatchObject({ results: [{ outcome: "failed" }] });
+    expect((run as { results: Array<{ linkBlocked?: boolean }> }).results[0].linkBlocked).toBeUndefined();
+    const saved = t.data.pinterest_posts[0];
+    expect(saved).toMatchObject({ publication_status: "ready", retry_count: 1 });
+    expect(String(saved.error_message)).toMatch(/rate limit was reached \(HTTP 429, Pinterest code 8\)/);
+    expect(String(saved.error_message)).not.toMatch(/Trial/);
+  });
+});
+
 describe("automatic Pins: no duplicates after a timeout", () => {
   it("leaves a timed-out Pin in Publishing, then finds it on the board instead of posting again", async () => {
     const timeout = fakePinterest({ "/pins": () => new Error("socket hang up") });

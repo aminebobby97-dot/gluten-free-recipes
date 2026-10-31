@@ -163,6 +163,7 @@ Once everything below is switched on, each day at 02:00 UTC (09:00 in Bangkok) t
 | The daily budget | The run stops before the AI call; the run is red |
 | The recipe page is not live yet | The Pin is not posted. It is tried again on the next run (3 tries in total) |
 | Pinterest refuses the Pin | The Pin goes back to Ready with the reason; tried again on the next run (3 tries in total) |
+| Pinterest blocks the Pin's link (for example "may lead to spam") | The Pin goes back to Ready with Pinterest's message and code, and is **not** retried automatically. The run posts no other Pins. Check the link in Pinterest (claim your website in Pinterest's settings), then publish it by hand from Admin → Pinterest |
 | Pinterest does not answer | The Pin stays in Publishing; the next run (or **Check Pinterest**) looks for it on your board first |
 | Pinterest sign-in expired | The recipe still publishes; its Pin waits. The run summary says to reconnect in Admin → Pinterest |
 

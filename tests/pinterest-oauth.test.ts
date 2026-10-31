@@ -9,6 +9,7 @@ import {
   createOAuthState,
   getPinterestConfig,
   getValidAccessToken,
+  PinLinkBlockedError,
   publishPin,
   selectPinterestBoard,
   tokenHealth,
@@ -336,6 +337,25 @@ describe("manual publishing of one Pin", () => {
     expect(String(t.data.pinterest_posts[0].error_message)).toMatch(/not permitted/);
     expect(String(t.data.pinterest_posts[0].error_message)).not.toContain(ACCESS);
     expect(p.calls).toHaveLength(1); // no automatic retry
+  });
+
+  it("tells a blocked link apart from a rate limit, with Pinterest's message and code", async () => {
+    const p = fakePinterest({ "/pins": () => ({ status: 429, body: { code: 8, message: "Sorry! We blocked this link because it may lead to spam." } }) });
+    const t = setup();
+    const error = await publishPin(t.db, "pin-1", "admin-1", { aiModified: false }, deps(p.fetcher)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PinLinkBlockedError);
+    expect(String((error as Error).message)).toMatch(/blocked the Pin's link as possible spam \(HTTP 429, Pinterest code 8\)\. This is not a rate limit/);
+    expect(t.data.pinterest_posts[0]).toMatchObject({ publication_status: "ready", publish_started_at: null });
+    expect(p.calls).toHaveLength(1);
+  });
+
+  it("reports a genuine rate limit as one, with the HTTP status and code", async () => {
+    const p = fakePinterest({ "/pins": () => ({ status: 429, body: { code: 8, message: "Too many requests" } }) });
+    const t = setup();
+    const error = await publishPin(t.db, "pin-1", "admin-1", { aiModified: false }, deps(p.fetcher)).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(PinLinkBlockedError);
+    expect(String((error as Error).message)).toMatch(/rate limit was reached \(HTTP 429, Pinterest code 8\)\. Try again later\. Pinterest said: "Too many requests"/);
+    expect(t.data.pinterest_posts[0].publication_status).toBe("ready");
   });
 
   it("keeps a timed-out Pin in Publishing, so it cannot be posted twice", async () => {
