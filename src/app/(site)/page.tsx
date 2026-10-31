@@ -7,11 +7,12 @@ import { featuredCategories, heroImage } from "@/content/site";
 import { getCategories, getLatestRecipes, getPopularRecipes } from "@/lib/data/public";
 import { buildWebsiteJsonLd } from "@/lib/seo/structured-data";
 import { pageMetadata } from "@/lib/seo/metadata";
-import { siteConfig } from "@/lib/env";
+
+const homeTitle = "Gluten-Free Recipes | Easy & Delicious Recipes";
 
 export const metadata = {
   ...pageMetadata({
-    title: `${siteConfig.name}: Gluten-Free Recipes Made Simple`,
+    title: homeTitle,
     description:
       "Easy, flavorful gluten-free recipes for everyday cooking. Discover gluten-free breakfasts, dinners, desserts, baking and more.",
     path: "/",
@@ -19,7 +20,7 @@ export const metadata = {
     imageAlt: heroImage.alt,
   }),
   // The homepage title is complete on its own; skip the "| Site" template.
-  title: { absolute: `${siteConfig.name}: Gluten-Free Recipes Made Simple` },
+  title: { absolute: homeTitle },
 };
 
 export default function HomePage() {

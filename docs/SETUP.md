@@ -33,7 +33,7 @@ Copy `.env.example` to `.env.local` for local development. In Vercel, add the sa
 | Variable | Required | Where to find it |
 | --- | --- | --- |
 | `NEXT_PUBLIC_SITE_URL` | Yes | Your production URL: `https://www.glutenfreerecipehub.com` (no trailing slash). Set it for Production only |
-| `NEXT_PUBLIC_SITE_NAME` | Recommended | Brand name. Defaults to "Crumb & Clover" |
+| `NEXT_PUBLIC_SITE_NAME` | Recommended | Brand name. Defaults to "Gluten-Free Recipes" |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase → Project Settings → API → Project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes | Supabase → Project Settings → API Keys → publishable key (or set `NEXT_PUBLIC_SUPABASE_ANON_KEY` with the legacy anon key) |
 | `NEXT_PUBLIC_CONTACT_EMAIL` | Optional | Shown on Contact and Privacy pages |
