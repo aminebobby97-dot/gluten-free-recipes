@@ -109,7 +109,7 @@ When the daily run publishes a recipe in Automatic mode and **Post Pins to Pinte
 3. Refreshes the Pinterest sign-in if it expires within 3 days.
 4. Posts the Pin to the board you chose, with Pinterest's AI label when the photo was made with AI, linking to the recipe page.
 
-Each run also catches up: Pins of earlier automatic recipes that are still Ready, Failed or waiting in Publishing are handled first, up to 3 Pins per run. Each Pin gets at most **3 tries**; after that it waits in Admin → Pinterest for you, with the reason. Pins of recipes you published yourself are never posted automatically. Every step is logged on the recipe's job under **Publishing jobs**, and a Pin that was not posted turns the run red so GitHub emails you.
+Each run also catches up: Pins of earlier automatic recipes that are still Ready, Failed or waiting in Publishing are handled first, up to 3 Pins per run. Each Pin gets at most **3 tries**; after that it waits in Admin → Pinterest for you, with the reason. Pins of recipes you published yourself are never posted automatically. If Pinterest blocks a Pin's link (its message says something like "blocked this link because it may lead to spam"), the Pin is not retried automatically and the run stops posting Pins; error messages show Pinterest's own message, HTTP status and error code. Every step is logged on the recipe's job under **Publishing jobs**, and a Pin that was not posted turns the run red so GitHub emails you.
 
 Setup and activation are in [AUTOMATION.md](AUTOMATION.md#full-automation-recipes-and-pins).
 

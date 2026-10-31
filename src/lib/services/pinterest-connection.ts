@@ -379,6 +379,18 @@ export class PinOutcomeUnknownError extends ServiceError {
   }
 }
 
+/**
+ * Pinterest refused the Pin's destination link (for example as possible spam).
+ * The Pin is back in Ready, but trying the same link again will not help, so
+ * the daily worker does not retry it.
+ */
+export class PinLinkBlockedError extends ServiceError {
+  constructor(message: string) {
+    super("not_ready", message);
+    this.name = "PinLinkBlockedError";
+  }
+}
+
 /** Compares Pin links the way Pinterest may rewrite them (host case, trailing slash, fragment). */
 export function sameLink(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
@@ -473,6 +485,7 @@ export async function publishReadyPin(
       .eq("id", pin.id)
       .eq("publication_status", "publishing");
     if (err instanceof PinterestApiError && err.needsReconnect) await markNeedsReconnect(db, err.message);
+    if (err instanceof PinterestApiError && err.linkBlocked) throw new PinLinkBlockedError(message);
     throw new ServiceError("not_ready", message);
   }
 

@@ -11,14 +11,16 @@
 // Only Pins of AI recipes that a daily job published in automatic mode, and
 // whose recipe is still published, are considered: a recipe that failed its
 // checks is never published, so it never has a Pin. Each Pin gets at most
-// MAX_PIN_ATTEMPTS tries; after that it waits in Admin → Pinterest.
+// MAX_PIN_ATTEMPTS tries; after that it waits in Admin → Pinterest. A Pin
+// whose link Pinterest blocks (for example as possible spam) is never retried
+// automatically, and the run posts no further Pins.
 // Every step is logged on the recipe's publishing job.
 
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dbError } from "@/lib/services/errors";
 import { preparePin, type PinPreparationDeps, type PinterestPost } from "@/lib/services/pinterest";
-import { PinOutcomeUnknownError, checkPublishingPin, getPinterestConnection, getValidAccessToken, publishReadyPin, type PinterestDeps } from "@/lib/services/pinterest-connection";
+import { PinLinkBlockedError, PinOutcomeUnknownError, checkPublishingPin, getPinterestConnection, getValidAccessToken, publishReadyPin, type PinterestDeps } from "@/lib/services/pinterest-connection";
 import { logEvent } from "./log";
 import type { AutomationSettings } from "./pipeline";
 
@@ -45,6 +47,8 @@ export interface AutoPinResult {
   outcome: "published" | "waiting" | "failed";
   message: string;
   pinterestPinId?: string;
+  /** Pinterest blocked the Pin's link: it is not retried automatically. */
+  linkBlocked?: boolean;
 }
 
 export type AutoPinRun = { status: "skipped"; reason: string } | { status: "blocked"; reason: string; pins: number } | { status: "done"; results: AutoPinResult[] };
@@ -160,7 +164,18 @@ export async function publishAutomaticPins(
   }
 
   const results: AutoPinResult[] = [];
-  for (const candidate of candidates) results.push(await publishOne(db, candidate, deps));
+  for (const [i, candidate] of candidates.entries()) {
+    const result = await publishOne(db, candidate, deps);
+    results.push(result);
+    // A blocked link usually means Pinterest distrusts the site's links for now:
+    // more attempts would only add to it. The rest wait, without using any tries.
+    if (result.linkBlocked) {
+      for (const rest of candidates.slice(i + 1)) {
+        if (rest.publishing_job_id) await logEvent(db, rest.publishing_job_id, "publish_pin", "skipped", "Pin not posted: Pinterest blocked another Pin's link in this run.");
+      }
+      break;
+    }
+  }
   return { status: "done", results };
 }
 
@@ -171,10 +186,11 @@ async function publishOne(db: SupabaseClient, c: Candidate, deps: AutoPinDeps): 
   const log = async (step: string, status: "started" | "succeeded" | "failed" | "info", message?: string, detail: Record<string, unknown> = {}) => {
     if (jobId) await logEvent(db, jobId, step, status, message, { pin_id: c.id, ...detail });
   };
-  const recordFailure = async (message: string) => {
+  // retryCount defaults to one more try used; a blocked link uses them all up.
+  const recordFailure = async (message: string, retryCount = c.retry_count + 1) => {
     await db
       .from("pinterest_posts")
-      .update({ error_message: message, retry_count: c.retry_count + 1 })
+      .update({ error_message: message, retry_count: retryCount })
       .eq("id", c.id)
       .in("publication_status", ["ready", "failed", "pending"]);
   };
@@ -233,6 +249,10 @@ async function publishOne(db: SupabaseClient, c: Candidate, deps: AutoPinDeps): 
     const message = messageOf(err);
     await log("publish_pin", "failed", message);
     if (err instanceof PinOutcomeUnknownError) return { ...base, outcome: "waiting", message };
+    if (err instanceof PinLinkBlockedError) {
+      await recordFailure(message, Math.max(c.retry_count + 1, MAX_PIN_ATTEMPTS));
+      return { ...base, outcome: "failed", message, linkBlocked: true };
+    }
     await recordFailure(message);
     return { ...base, outcome: "failed", message };
   }
