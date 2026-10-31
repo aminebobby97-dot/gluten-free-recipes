@@ -400,10 +400,14 @@ describe("where Pins can be posted from", () => {
     expect(sources().filter((f) => /\bpublishReadyPin\(/.test(readFileSync(f, "utf8"))).sort()).toEqual([join("src", "lib", "automation", "pins.ts"), join("src", "lib", "services", "pinterest-connection.ts")].sort());
   });
 
-  it("the daily schedule stays switched off", () => {
+  it("the daily schedule runs once a day at 02:00 UTC in automatic mode, and can still be started by hand", () => {
     const workflow = readFileSync(".github/workflows/daily-recipe.yml", "utf8");
-    expect(workflow).not.toMatch(/^\s*schedule:/m);
-    expect(workflow).toMatch(/^\s*#\s*schedule:/m);
-    expect(workflow).toMatch(/#\s*- cron: "0 2 \* \* \*"/);
+    expect(workflow).toMatch(/^\s*schedule:\s*$/m);
+    expect(workflow.match(/^\s*- cron:/gm)).toHaveLength(1);
+    expect(workflow).toMatch(/^\s*- cron: "0 2 \* \* \*"/m);
+    expect(workflow).toMatch(/^\s*workflow_dispatch:/m);
+    expect(workflow).toContain("RUN_MODE: ${{ github.event_name == 'schedule' && 'auto' || inputs.mode }}");
+    expect(workflow).toContain("RUN_TRIGGER: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}");
+    expect(workflow).toMatch(/^\s*group: daily-recipe$/m);
   });
 });

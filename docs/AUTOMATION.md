@@ -22,7 +22,7 @@ Nothing is generated unless **all** of these allow it:
 
 | Switch | Where | Now |
 | --- | --- | --- |
-| Schedule | `.github/workflows/daily-recipe.yml` | Written (02:00 UTC = 09:00 Bangkok) but commented out. Runs only when started by hand |
+| Schedule | `.github/workflows/daily-recipe.yml` | On: every day at 02:00 UTC (09:00 Bangkok) in automatic mode; can also be started by hand |
 | `AUTOMATION_ENABLED` | GitHub variable | `false` |
 | "Generate a recipe each day" | Admin → Automation | Off |
 | Automatic publishing | Admin → Automation, and the database | Locked until 5 AI recipes are approved by you |
@@ -199,7 +199,7 @@ Do these one at a time, in order, and check each result before the next.
 3. GitHub variable `AUTOMATION_ENABLED` = `true` (Settings → Environments → automation).
 4. Admin → Automation: tick **Generate a recipe each day**, choose **Automatic**, tick **Post Pins to Pinterest automatically**, save. The Mode box should say **Automatic + Pins**.
 5. Run the workflow by hand with mode `auto`. Check: the run summary says published, the recipe page opens on the site, the Pin is on your board and links to the recipe, and the job under **Publishing jobs** shows `verify_page` and `publish_pin` succeeded.
-6. Ask Claude for the one-line pull request that turns on the schedule (uncomments `cron: "0 2 * * *"`), and merge it. The first scheduled run happens the next day at about 02:00 UTC; GitHub often starts scheduled runs 5 to 30 minutes late.
+6. The schedule (`cron: "0 2 * * *"`) is now on. The first scheduled run happens at the next 02:00 UTC; GitHub often starts scheduled runs 5 to 30 minutes late. You can run recipes only, with **Post Pins to Pinterest automatically** unticked: their Pins wait as Ready in Admin → Pinterest. When you tick it again, each run posts up to 3 waiting Pins, oldest first.
 
 **To stop everything at any time:** set `AUTOMATION_ENABLED` to `false`, or untick **Generate a recipe each day**. To stop only Pins, untick **Post Pins to Pinterest automatically**; recipes keep publishing and their Pins wait for you in Admin → Pinterest.
 

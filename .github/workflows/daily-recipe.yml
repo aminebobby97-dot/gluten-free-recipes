@@ -2,10 +2,12 @@
 # saves it for review or, in automatic mode, publishes it and then posts its
 # Pinterest Pin once the recipe page is confirmed live.
 #
-# For now it only runs when started by hand (Actions -> Daily recipe -> Run
-# workflow). The daily schedule stays commented out until James approves
-# activation; even then, nothing runs unless the AUTOMATION_ENABLED variable is
-# "true" AND automation is switched on in the admin dashboard. Pins are only
+# Runs every day at 02:00 UTC (09:00 Asia/Bangkok) in automatic mode, and can
+# still be started by hand (Actions -> Daily recipe -> Run workflow). At most
+# one daily recipe per UTC date. Nothing runs unless the AUTOMATION_ENABLED
+# variable is "true" AND automation is switched on in the admin dashboard; a
+# scheduled run publishes only when Admin -> Automation is in Automatic mode
+# (otherwise it saves a draft for review). Pins are only
 # posted automatically when Admin -> Automation also has Automatic mode and
 # "Post Pins automatically" on. Dry runs work while automation is off, never
 # save a recipe and never post a Pin.
@@ -28,8 +30,8 @@ on:
         description: "Review runs only: finish this failed job from its corrected draft (see docs/AUTOMATION.md, Recovering a rejected draft). Leave empty normally."
         type: string
         required: false
-  # schedule:
-  #   - cron: "0 2 * * *" # 02:00 UTC = 09:00 Asia/Bangkok, every day. Uncomment only after activation is approved.
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC = 09:00 Asia/Bangkok, every day. GitHub may start it a little late.
 
 permissions:
   contents: read
