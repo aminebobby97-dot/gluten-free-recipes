@@ -18,7 +18,7 @@ export function resolveSiteUrl(env: Record<string, string | undefined> = process
 }
 
 export const siteConfig = {
-  name: process.env.NEXT_PUBLIC_SITE_NAME?.trim() || "Crumb & Clover",
+  name: process.env.NEXT_PUBLIC_SITE_NAME?.trim() || "Gluten-Free Recipes",
   tagline: "Gluten-free recipes made simple",
   url: resolveSiteUrl(),
   locale: "en_US",

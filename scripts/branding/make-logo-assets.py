@@ -1,4 +1,4 @@
-"""Build the logo and favicon files from the original PNG.
+"""Build the clean (text-free) leaf logo and favicon files from the original PNG.
 Usage: python3 -I make_logo.py <source.png> <out_dir>
 """
 import io, os, sys
@@ -29,6 +29,9 @@ safe = np.maximum(alpha, 1e-3)[..., None]
 unblend = np.clip((rgb - (1 - alpha[..., None]) * 255) / safe, 0, 255)
 color[band] = unblend[band]
 color[band & (alpha < 0.15)] = GREEN
+# The leaf is a flat green, so paint the whole interior that green: this removes
+# the white lettering and leaves a clean, text-free leaf.
+color[~band] = GREEN
 rgba = np.dstack([color, alpha * 255]).round().astype(np.uint8)
 img = Image.fromarray(rgba, "RGBA")
 img = img.crop(img.getchannel("A").point(lambda v: 255 if v > 8 else 0).getbbox())
