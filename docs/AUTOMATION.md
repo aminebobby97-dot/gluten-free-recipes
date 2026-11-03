@@ -40,7 +40,9 @@ Every AI recipe must be free from pork, pork-derived ingredients (bacon, ham, la
 3. **The independent reviewer** is told to block pork, alcohol and hidden sources of them.
 4. **Keywords** for pork or alcohol dishes ("bacon wrapped dates", "beer bread") are marked *rejected* without any AI call, and the next keyword is used.
 
-Allowed: chicken, turkey or beef versions named as such ("turkey bacon", "beef gelatin"), wine and cider vinegars, and non-alcoholic substitutes named as such ("alcohol-free vanilla extract", "non-alcoholic red wine") with a note to check the label. Approving an AI draft in the admin dashboard also runs the check. Recipes that are already published are not changed.
+Allowed: chicken, turkey or beef versions named as such ("turkey bacon", "beef gelatin"), wine and cider vinegars, and non-alcoholic substitutes named as such ("alcohol-free vanilla extract", "non-alcoholic red wine") with a note to check the label. **Soy sauce and similar condiments** (soy sauce, tamari, coconut aminos, fish sauce, oyster sauce, hoisin, miso, gochujang, teriyaki sauce, ponzu, bottled cooking sauces) are never assumed safe: in the ingredient list and in substitutions, tips and FAQ answers, the same item must say it is labeled both gluten-free and alcohol-free. Steps may refer to one only when the ingredient list has a compliant version. "Regular soy sauce" is always rejected, and XO sauce counts as pork (it contains ham).
+
+Approving an AI draft in the admin dashboard also runs the check. Recipes that are already published are not changed.
 
 ## What it costs
 

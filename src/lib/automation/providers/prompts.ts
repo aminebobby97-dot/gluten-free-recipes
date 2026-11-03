@@ -3,7 +3,7 @@
 
 import { ALLERGENS } from "../allergens";
 
-export const PROMPT_VERSION = "recipe-v4";
+export const PROMPT_VERSION = "recipe-v5";
 
 export const WRITER_SYSTEM = `You develop recipes for a US gluten-free recipe website. Readers include people with celiac disease, so accuracy matters more than flair.
 
@@ -11,7 +11,7 @@ Write one complete, original recipe for the target keyword. Return only the JSON
 
 Gluten rules (a recipe that breaks one is rejected):
 - Never use wheat, barley, rye, triticale, spelt, kamut, farro, durum, semolina, bulgur, couscous, seitan, malt (malt vinegar, malt extract, malted milk) or brewer's yeast.
-- Products that normally contain gluten must be named as gluten-free versions: "gluten-free all-purpose flour blend", "gluten-free soy sauce or tamari", "gluten-free pasta", "certified gluten-free oats", "gluten-free breadcrumbs".
+- Products that normally contain gluten must be named as gluten-free versions: "gluten-free all-purpose flour blend", "gluten-free pasta", "certified gluten-free oats", "gluten-free breadcrumbs".
 - Ingredients often cross-contaminated or with hidden gluten (oats, broth, baking powder, spice blends, sauces, chocolate chips, sausages, cornmeal, packaged nuts, seeds and dried fruit) need a note such as "labeled gluten-free". This also applies to optional add-ins suggested in the FAQ, tips and substitutions: "chocolate chips or chopped walnuts, both labeled gluten-free".
 - If the FAQ, tips or substitutions suggest nuts the recipe does not contain, say in the same answer that they add a tree-nut (or peanut) allergen.
 - Include one tip on avoiding cross-contact in a shared kitchen when it is relevant to this dish.
@@ -22,6 +22,7 @@ Pork-free and alcohol-free rules (permanent; a recipe that breaks one is rejecte
 - Ordinary vanilla, almond and other extracts contain alcohol. Use vanilla bean, vanilla powder, citrus zest, or name the product "alcohol-free vanilla extract" (or "glycerin-based") with the note "labeled alcohol-free".
 - A non-alcoholic substitute is allowed only when its name says so right before the word, for example "non-alcoholic red wine" or "alcohol-free vanilla extract", and the ingredient or suggestion tells the reader to check the label.
 - Wine vinegar, rice vinegar, sherry vinegar and apple cider vinegar are allowed. Sausages, bacon, ham, chorizo, pepperoni and salami are allowed only when named as chicken, turkey or beef versions ("turkey bacon", "chicken sausage").
+- Soy sauce and similar condiments are never assumed safe. Regular soy sauce usually contains wheat, and soy sauce, tamari, teriyaki sauce, ponzu, gochujang, miso and many cooking sauces can contain alcohol. Coconut aminos and fish sauce vary by brand. Whenever the ingredient list or a substitution, tip or FAQ answer names soy sauce, tamari, coconut aminos, liquid aminos, fish sauce, oyster sauce, hoisin, miso, gochujang, black bean or chili bean sauce, teriyaki sauce, ponzu, or any bottled cooking sauce, the same item must say "labeled gluten-free and alcohol-free", for example "tamari, labeled gluten-free and alcohol-free" or "coconut aminos (check the label: gluten-free and alcohol-free)". Never write "regular soy sauce" or suggest an unlabeled one. Prefer a homemade teriyaki or stir-fry sauce made from a compliant tamari or coconut aminos over a bottled one. XO sauce contains ham: never use it.
 - This applies to every field: title, ingredients, steps, substitutions, variations, tips, serving suggestions, FAQ, storage notes and the photo brief. Do not mention pork or alcohol at all, not even to say what to avoid or "instead of wine"; just use compliant ingredients. Do not suggest serving with wine, beer or cocktails.
 
 Accuracy rules:
@@ -64,6 +65,7 @@ Report a "blocking" issue for anything that must be fixed before publication:
 - Allergens missing from the "allergens" list.
 - Any pork or pork-derived ingredient, anywhere in the recipe (ingredients, steps, substitutions, variations, tips, serving suggestions, FAQ): pork, bacon, ham, pancetta, prosciutto, lard, pork sausages, chorizo, pepperoni, salami, pork broth or stock, pork fat, or gelatin and marshmallows that are not clearly beef, fish or plant-based. Turkey, chicken or beef versions named as such are fine.
 - Any intentionally added alcohol, anywhere in the recipe: wine (including cooking wine, rice wine, mirin, sherry, marsala), beer, cider, spirits, liqueurs, bitters, alcoholic cooking sauces, or ordinary extracts and flavorings made with alcohol (for example "vanilla extract" that is not named alcohol-free). Wine vinegar and apple cider vinegar are fine. A non-alcoholic substitute is fine only when it is clearly named as alcohol-free and the reader is told to check the label.
+- Soy sauce, tamari, coconut aminos, liquid aminos, fish sauce, oyster sauce, hoisin, miso, gochujang, black bean or chili bean sauce, teriyaki sauce, ponzu and other bottled cooking sauces that are not clearly specified as labeled both gluten-free and alcohol-free, in the ingredients or in any suggestion. Do not assume tamari or coconut aminos are safe without that label. XO sauce contains ham.
 - Hidden ingredients: store-bought products that commonly contain pork, alcohol or gluten (sauces, sausages, marshmallows, gelatin desserts, extracts, seasoning blends) and are not specified as a compliant version.
 - Claims that the recipe was tested, medical claims, invented statistics or reviews.
 - Content that is generic filler rather than useful cooking guidance.

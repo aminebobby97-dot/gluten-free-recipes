@@ -16,7 +16,8 @@
 // extract", "non-alcoholic red wine") and, in the ingredient list and in
 // suggestions, tell the reader to check the label.
 
-export type DietaryCategory = "pork" | "alcohol";
+/** "condiment": soy sauce and similar sauces not labeled both gluten-free and alcohol-free. */
+export type DietaryCategory = "pork" | "alcohol" | "condiment";
 
 export interface DietaryViolation {
   field: string;
@@ -70,6 +71,7 @@ const RULES: Rule[] = [
   { category: "pork", term: "salami", pattern: /\bsalami\b/gi, substitute: NOT_PORK },
   { category: "pork", term: "cured pork", pattern: /\b(?:mortadella|capicola|capocollo|coppa|jam[oó]n|soppressata|lardo|nduja|'nduja|speck(?! of))\b/gi },
   { category: "pork", term: "pork", pattern: /\b(?:pigs?|piglets?|hogs?|swine|(?:wild )?boar|gammon|trotters?|chitterlings|scrapple|carnitas|char siu|tonkotsu|lech[oó]n|spam)\b/gi },
+  { category: "pork", term: "XO sauce (made with ham)", pattern: /\bXO sauce\b/gi },
   { category: "pork", term: "pork fat", pattern: /\b(?:fatback|caul fat|cracklings?|chicharr[oó]n(?:es)?|pork rinds?)\b/gi },
   { category: "pork", term: "pork ribs", pattern: /\b(?:spare ?ribs|baby[- ]back ribs|st\.? louis[- ]style ribs)\b/gi, substitute: /beef|lamb/ },
   { category: "pork", term: "pork-derived gelatin", pattern: /\bgelatine?\b/gi, substitute: NOT_PORK_GELATIN },
@@ -181,6 +183,101 @@ export function findDietaryViolations(field: string, value: string | null | unde
   return found;
 }
 
+// --- Soy sauce and similar condiments ----------------------------------------
+//
+// Soy sauce usually contains wheat, and soy sauce, tamari, teriyaki, ponzu,
+// gochujang, miso and other cooking sauces can contain alcohol (added or from
+// brewing). Coconut aminos and fish sauce vary by brand. So none of them is
+// assumed safe: where the recipe names one as something to buy (the ingredient
+// list, substitutions, tips, FAQ), the same item must say it is labeled both
+// gluten-free and alcohol-free. In the steps and other copy, a mention is fine
+// only when the ingredient list has a compliant version of it.
+
+export interface Condiment {
+  kind: string;
+  pattern: RegExp;
+  /** A homemade version made from a compliant soy sauce, tamari or coconut aminos is fine. */
+  composite?: boolean;
+}
+
+export const CONDIMENTS: Condiment[] = [
+  { kind: "soy sauce", pattern: /\b(?:(?:light|dark|sweet|low[- ]sodium|reduced[- ]sodium|thick|mushroom)\s+)?soy sauce\b|\bshoyu\b|\bkecap manis\b/gi },
+  { kind: "tamari", pattern: /\btamari\b/gi },
+  { kind: "coconut aminos", pattern: /\bcoconut aminos\b/gi },
+  { kind: "liquid aminos", pattern: /\b(?:liquid|soy) aminos\b/gi },
+  { kind: "fish sauce", pattern: /\bfish sauce\b/gi },
+  { kind: "oyster sauce", pattern: /\boyster sauce\b/gi },
+  { kind: "hoisin sauce", pattern: /\bhoisin(?: sauce)?\b/gi },
+  { kind: "miso", pattern: /\b(?:(?:white|red|yellow|shiro|aka|brown rice|chickpea)\s+)?miso(?: paste)?\b/gi },
+  { kind: "gochujang", pattern: /\bgochujang\b/gi },
+  { kind: "chili bean sauce", pattern: /\b(?:doubanjiang|chili bean (?:sauce|paste)|black bean (?:sauce|paste))\b/gi },
+  { kind: "teriyaki sauce", pattern: /\bteriyaki (?:sauce|glaze|marinade)\b/gi, composite: true },
+  { kind: "ponzu", pattern: /\bponzu(?: sauce)?\b/gi, composite: true },
+  {
+    kind: "cooking sauce",
+    pattern: /\b(?:stir[- ]fry|cooking|simmer|yakitori|unagi|eel|plum|sweet and sour|duck|katsu|tonkatsu|yakisoba|bulgogi|char siu|orange chicken|general tso'?s?) sauces?\b/gi,
+    composite: true,
+  },
+];
+
+/** Bases a homemade teriyaki, ponzu or stir-fry sauce can be made from. */
+const SOY_BASES = new Set(["soy sauce", "tamari", "coconut aminos", "liquid aminos"]);
+const GLUTEN_FREE = /\bgluten[- ]free\b|\bcertified gf\b/i;
+const ALCOHOL_FREE = new RegExp(`\\b(?:${NON_ALCOHOLIC.source})`, "i");
+/** "regular soy sauce", "any fish sauce": never compliant, whatever else the sentence says. */
+const UNSAFE_PREFIX = /\b(?:regular|ordinary|standard|traditional|conventional|normal|any|most|plain|store[- ]bought)\s+$/i;
+
+/** True when one piece of text says the product is labeled gluten-free and alcohol-free. */
+export function isCompliantCondimentText(text: string): boolean {
+  return GLUTEN_FREE.test(text) && ALCOHOL_FREE.test(text) && LABEL.test(text);
+}
+
+interface CondimentMention {
+  kind: string;
+  match: string;
+  composite: boolean;
+  unsafe: boolean;
+}
+
+function condimentMentions(text: string): CondimentMention[] {
+  const mentions: CondimentMention[] = [];
+  for (const c of CONDIMENTS) {
+    for (const m of text.matchAll(c.pattern)) {
+      const start = m.index ?? 0;
+      const before = text.slice(Math.max(0, start - 30), start);
+      const after = text.slice(start + m[0].length, start + m[0].length + 10);
+      if (/^[- ]free\b/i.test(after)) continue;
+      mentions.push({ kind: c.kind, match: m[0], composite: Boolean(c.composite), unsafe: UNSAFE_PREFIX.test(before) });
+    }
+  }
+  return mentions;
+}
+
+const condimentMessage = (field: string, match: string) =>
+  `${field} uses "${match}" without saying it is labeled both gluten-free and alcohol-free. Name a product labeled gluten-free and alcohol-free (for example "tamari, labeled gluten-free and alcohol-free"), or leave it out.`;
+
+/**
+ * Soy sauce and similar condiments in one field. "buy" fields (ingredients and
+ * suggestions) must qualify the product themselves; other fields may refer to a
+ * compliant product from the ingredient list.
+ */
+export function findCondimentViolations(field: string, value: string | null | undefined, buy: boolean, compliantKinds: ReadonlySet<string> = new Set()): DietaryViolation[] {
+  if (!value) return [];
+  const qualified = isCompliantCondimentText(value);
+  const hasBase = [...compliantKinds].some((k) => SOY_BASES.has(k));
+  const found: DietaryViolation[] = [];
+  for (const m of condimentMentions(value)) {
+    if (m.unsafe) {
+      found.push({ field, category: "condiment", term: m.kind, match: m.match, message: condimentMessage(field, m.match) });
+      continue;
+    }
+    if (qualified) continue;
+    if (!buy && (compliantKinds.has(m.kind) || (m.composite && hasBase))) continue;
+    found.push({ field, category: "condiment", term: m.kind, match: m.match, message: condimentMessage(field, m.match) });
+  }
+  return found;
+}
+
 export interface DietaryCheckInput {
   title?: string | null;
   slug?: string | null;
@@ -203,7 +300,7 @@ export interface DietaryCheckInput {
 
 const join = (...parts: Array<string | null | undefined>) => parts.filter(Boolean).join(" ");
 
-/** Checks every field of a recipe. An empty list means it is pork-free and alcohol-free. */
+/** Checks every field of a recipe. An empty list means it is pork-free and alcohol-free, with compliant condiments. */
 export function analyzeDietaryRestrictions(recipe: DietaryCheckInput): DietaryViolation[] {
   const label = { requireLabel: true };
   const fields: Array<[string, string | null | undefined, CheckOptions?]> = [
@@ -224,7 +321,25 @@ export function analyzeDietaryRestrictions(recipe: DietaryCheckInput): DietaryVi
     ["image_alt", recipe.image_alt ?? recipe.featured_image_alt],
     ["image_brief", recipe.image_brief],
   ];
-  return fields.flatMap(([field, value, options]) => findDietaryViolations(field, value, options));
+  // Condiments the ingredient list names as labeled gluten-free and alcohol-free.
+  const compliantKinds = new Set(
+    (recipe.ingredients ?? []).flatMap((i) => {
+      const text = join(i.name, i.note);
+      if (!isCompliantCondimentText(text)) return [];
+      return condimentMentions(text).filter((m) => !m.unsafe).map((m) => m.kind);
+    }),
+  );
+  const condimentFields = fields.map(([field, value, options]): [string, string | null | undefined, boolean] => [field, value, Boolean(options?.requireLabel)]);
+  // A substitution's "original" is the recipe's own ingredient, already checked
+  // in the list; the substitute and its note are what the reader would buy.
+  (recipe.substitutions ?? []).forEach((sub, n) => {
+    const at = condimentFields.findIndex(([field]) => field === `substitutions[${n}]`);
+    condimentFields.splice(at, 1, [`substitutions[${n}]`, sub.original, false], [`substitutions[${n}]`, join(sub.substitute, sub.note), true]);
+  });
+  return [
+    ...fields.flatMap(([field, value, options]) => findDietaryViolations(field, value, options)),
+    ...condimentFields.flatMap(([field, value, buy]) => findCondimentViolations(field, value, buy, compliantKinds)),
+  ];
 }
 
 /** True when a keyword asks for a pork or alcohol dish ("bacon wrapped dates", "beer bread"). */

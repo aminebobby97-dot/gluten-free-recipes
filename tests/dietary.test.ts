@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { analyzeDietaryRestrictions, dietaryRejectionReason, findDietaryViolations, keywordViolation } from "@/lib/recipes/dietary";
+import { analyzeDietaryRestrictions, dietaryRejectionReason, findCondimentViolations, findDietaryViolations, keywordViolation } from "@/lib/recipes/dietary";
 import { validateGeneratedRecipe } from "@/lib/automation/validate";
 import { REVIEWER_SYSTEM, WRITER_SYSTEM } from "@/lib/automation/providers/prompts";
 import { automationDb, fakeImages, fakeProviders, fakeSite, goodRecipe } from "./support/automation-fixtures";
@@ -355,5 +355,108 @@ describe("publishRecipe: AI recipes must be pork-free and alcohol-free", () => {
 
     const live = createFakeDb({ recipes: [{ ...draft, status: "published", published_at: "2026-10-01T00:00:00.000Z", ingredients: [{ amount: "1", unit: "tsp", name: "pure vanilla extract" }] }] });
     await expect(publishRecipe(live.db, "r1")).resolves.toBeTruthy();
+  });
+});
+
+describe("soy sauce and similar condiments", () => {
+  const OK = "labeled gluten-free and alcohol-free";
+  const terms = (recipe: Parameters<typeof analyzeDietaryRestrictions>[0]) => analyzeDietaryRestrictions(recipe).map((v) => [v.field, v.category, v.term]);
+  const stirFry = (overrides: Partial<ReturnType<typeof goodRecipe>> = {}) =>
+    goodRecipe({
+      title: "Gluten-Free Chicken Stir-Fry",
+      ingredients: [
+        { amount: "1", unit: "lb", name: "boneless chicken breast", note: "sliced" },
+        { amount: "3", unit: "tbsp", name: "tamari", note: OK },
+        { amount: "1", unit: "tbsp", name: "honey" },
+        { amount: "2", unit: "cups", name: "broccoli florets" },
+      ],
+      instructions: [{ text: "Whisk the tamari and honey to make the stir-fry sauce." }, { text: "Stir-fry the chicken until it reaches 165°F, then add the broccoli and the tamari mixture." }],
+      substitutions: [{ original: "tamari", substitute: "coconut aminos", note: `Sweeter and lower in sodium; use one ${OK}.` }],
+      ...overrides,
+    });
+
+  it("passes compliant tamari, coconut aminos and a homemade stir-fry sauce", () => {
+    expect(terms(stirFry())).toEqual([]);
+  });
+
+  it.each([
+    ["3 tbsp soy sauce", "soy sauce"],
+    ["3 tbsp gluten-free soy sauce", "soy sauce"],
+    ["3 tbsp low-sodium soy sauce, labeled gluten-free", "soy sauce"],
+    ["2 tbsp tamari", "tamari"],
+    ["2 tbsp tamari, labeled gluten-free", "tamari"],
+    ["2 tbsp coconut aminos", "coconut aminos"],
+    ["1 tbsp fish sauce", "fish sauce"],
+    ["2 tbsp oyster sauce, gluten-free", "oyster sauce"],
+    ["2 tbsp hoisin sauce", "hoisin sauce"],
+    ["1/4 cup teriyaki sauce", "teriyaki sauce"],
+    ["1 tbsp white miso paste", "miso"],
+    ["1 tbsp gochujang", "gochujang"],
+    ["2 tbsp ponzu", "ponzu"],
+    ["1/2 cup stir-fry sauce", "cooking sauce"],
+    ["1 tbsp kecap manis", "soy sauce"],
+    ["1 tbsp black bean sauce", "chili bean sauce"],
+  ])("rejects %s in the ingredient list", (name, term) => {
+    expect(terms(stirFry({ ingredients: [...stirFry().ingredients, { amount: "", unit: "", name }] }))).toContainEqual(["ingredients[4]", "condiment", term]);
+  });
+
+  it.each([
+    `soy sauce, ${OK}`,
+    `tamari, ${OK}`,
+    "coconut aminos (check the label: gluten-free and alcohol-free)",
+    `fish sauce, ${OK}`,
+    `oyster sauce, ${OK}`,
+    `hoisin sauce, ${OK}`,
+    `white miso, ${OK}`,
+    `gochujang, ${OK}`,
+  ])("accepts %s", (name) => {
+    expect(findCondimentViolations("ingredients[0]", name, true)).toEqual([]);
+  });
+
+  it("never accepts 'regular' soy sauce, even next to a compliant one", () => {
+    expect(findCondimentViolations("faq[0]", `Use regular soy sauce or tamari ${OK}.`, true).map((v) => v.match)).toEqual(["soy sauce"]);
+  });
+
+  it("rejects XO sauce as a pork ingredient", () => {
+    expect(ingredient("1 tbsp XO sauce")).toEqual(["XO sauce (made with ham)"]);
+  });
+
+  it("checks substitutions, variations (tips) and FAQ answers", () => {
+    expect(terms(stirFry({ substitutions: [{ original: "tamari", substitute: "soy sauce", note: "Same amount." }] }))).toEqual([["substitutions[0]", "condiment", "soy sauce"]]);
+    expect(terms(stirFry({ tips: ["For a variation, brush with teriyaki sauce before serving."] }))).toEqual([["tips[0]", "condiment", "teriyaki sauce"]]);
+    expect(terms(stirFry({ faq: [...goodRecipe().faq, { question: "Can I use fish sauce?", answer: "Yes, add a teaspoon." }] }))).toEqual([["faq[4]", "condiment", "fish sauce"]]);
+    expect(terms(stirFry({ faq: [...goodRecipe().faq, { question: "Can I use coconut aminos?", answer: `Yes, use one ${OK}.` }] }))).toEqual([]);
+  });
+
+  it("checks the steps against the ingredient list", () => {
+    // A condiment the list does not have in a compliant version.
+    expect(terms(stirFry({ instructions: [...stirFry().instructions, { text: "Finish with a splash of oyster sauce." }] }))).toEqual([["instructions[2]", "condiment", "oyster sauce"]]);
+    // The steps say tamari, but the list has unlabeled tamari: both are flagged.
+    const unlabeled = stirFry({ ingredients: stirFry().ingredients.map((i) => (i.name === "tamari" ? { ...i, note: "" } : i)) });
+    expect(terms(unlabeled).map(([field]) => field)).toEqual(["ingredients[1]", "instructions[0]", "instructions[0]", "instructions[1]", "substitutions[0]"]);
+  });
+
+  it("does not flag harmless words", () => {
+    expect(findCondimentViolations("introduction", "A soy-free, miso-free dinner with soybeans and edamame.", false)).toEqual([]);
+    expect(findCondimentViolations("title", "Gluten-Free Teriyaki Chicken", false)).toEqual([]);
+    expect(findCondimentViolations("ingredients[0]", "1 lb cod fillets", true)).toEqual([]);
+  });
+
+  it("blocks a draft in validateGeneratedRecipe and tells the repair round why", async () => {
+    const withSoy = stirFry({ substitutions: [{ original: "tamari", substitute: "regular soy sauce", note: "" }] });
+    expect(validateGeneratedRecipe(withSoy, KEYWORD, CATEGORIES).filter((i) => i.source === "dietary")).toEqual([
+      expect.objectContaining({ severity: "blocking", field: "substitutions[0]", message: expect.stringContaining("gluten-free and alcohol-free") }),
+    ]);
+    const { db, data } = automationDb();
+    const ai = fakeProviders({ drafts: [goodRecipe({ tips: ["Brush with soy sauce."] }), goodRecipe()] });
+    expect(await run(db, ai).result).toMatchObject({ status: "succeeded" });
+    expect((ai.repairer.inputs[0] as { issues: Array<{ message: string }> }).issues[0].message).toMatch(/soy sauce.*gluten-free and alcohol-free/);
+    expect(data.recipes).toHaveLength(1);
+  });
+
+  it("tells the writer and the reviewer", () => {
+    expect(WRITER_SYSTEM).toMatch(/labeled gluten-free and alcohol-free/);
+    expect(WRITER_SYSTEM).not.toMatch(/"gluten-free soy sauce or tamari"/);
+    expect(REVIEWER_SYSTEM).toMatch(/Do not assume tamari or coconut aminos are safe/);
   });
 });
