@@ -16,7 +16,7 @@ import { isSupabaseConfigured, siteConfig } from "@/lib/env";
 import { createSessionClient } from "@/lib/supabase/server";
 import { ServiceError, dbError } from "@/lib/services/errors";
 import { importKeywords, parseKeywordCsv } from "@/lib/services/keywords";
-import { createPinImageStore, prepareMissingPins, preparePin, updatePinContent, type PinPreparationDeps } from "@/lib/services/pinterest";
+import { createPinImageStore, prepareMissingPins, preparePin, resetPinDestination, updatePinContent, type PinPreparationDeps } from "@/lib/services/pinterest";
 import { PinterestApiError, buildAuthorizeUrl } from "@/lib/services/pinterest-api";
 import {
   OAUTH_STATE_COOKIE,
@@ -283,6 +283,8 @@ function pinFromForm(form: FormData) {
     board_name: text(form, "board_name"),
     image_text: text(form, "image_text"),
     image_alt: text(form, "image_alt"),
+    // Only forms that show the Destination URL field send it.
+    ...(form.has("destination_url") ? { destination_url: text(form, "destination_url") } : {}),
   };
 }
 
@@ -300,6 +302,18 @@ export async function savePinAction(_prev: ActionState, form: FormData): Promise
   revalidatePath("/admin/pinterest", "layout");
   if (result.outcome === "failed") return { ok: false, message: `Your text was saved, but the Pin image could not be updated: ${result.message}` };
   return { ok: true, message: result.outcome === "prepared" ? "Pin saved and its image updated." : "Pin saved." };
+}
+
+/** "Reset to original recipe URL": the Pin links to the recipe page again. */
+export async function resetPinDestinationAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase } = await requireAdmin();
+  try {
+    const pin = await resetPinDestination(supabase, text(form, "id"));
+    revalidatePath("/admin/pinterest", "layout");
+    return { ok: true, message: `The Pin links to the recipe page again: ${pin.destination_url}` };
+  } catch (error) {
+    return failure(error);
+  }
 }
 
 export async function preparePinAction(_prev: ActionState, form: FormData): Promise<ActionState> {
@@ -398,7 +412,13 @@ export async function publishPinAction(_prev: ActionState, form: FormData): Prom
   const { supabase, user } = await requireAdmin();
   if (text(form, "confirm") !== "yes") return { ok: false, message: "Tick the box to confirm you want to post this Pin to Pinterest." };
   try {
-    const result = await publishPin(supabase, text(form, "id"), user.id, { aiModified: text(form, "ai_modified") === "yes" }, createPinterestDeps());
+    const result = await publishPin(
+      supabase,
+      text(form, "id"),
+      user.id,
+      { aiModified: text(form, "ai_modified") === "yes", ...(form.has("expected_link") ? { expectedLink: text(form, "expected_link") } : {}) },
+      createPinterestDeps(),
+    );
     revalidatePath("/admin/pinterest", "layout");
     return { ok: true, message: `Published to “${result.boardName}” on Pinterest (Pin id ${result.pinterestPinId}).` };
   } catch (error) {

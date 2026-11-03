@@ -194,3 +194,46 @@ After the database is updated and the variables are set, merge the pull request 
 
 - Daily recipe automation (`AUTOMATION_ENABLED=false`, `automation_settings.enabled = false`).
 - Automatic Pinterest publishing (`automation_settings.pinterest_enabled = false`, the **Post Pins to Pinterest automatically** box). There is no bulk publishing.
+
+## Your own destination link (for example Bitly)
+
+Each Pin links to its recipe page by default. On a Pin's page you can replace that link with your own `https://` link, such as a Bitly link you made yourself. The site never creates short links and never publishes a Pin on its own.
+
+### What Pinterest allows (please read)
+
+Pinterest checks where a link really goes. Its [Community Guidelines](https://policy.pinterest.com/en/community-guidelines) say:
+
+- "don't use redirection to attempt to link to a site that is not permitted on Pinterest"
+- links with "excessive or deceptive redirection" may be blocked
+- "shortener services that are abused for spam, may be blocked"
+- "Pinners should be able to reasonably anticipate where your link will take them"
+
+So a Bitly link is **not** a way around a block. If Pinterest has blocked `glutenfreerecipehub.com`, it will most likely block a Bitly link to it too, and using short links to get around a block breaks Pinterest's rules and can put your account at risk. A Bitly link is fine for things like counting clicks, as long as it leads straight to your recipe.
+
+If Pinterest says **"We blocked this link because it may lead to spam"**, the fix is on Pinterest's side:
+
+1. Claim your website in Pinterest (**Settings → Claimed accounts → Websites**), if it is not claimed yet.
+2. Open a support ticket with Pinterest from its Help Center and ask them to review the domain. Pinterest's own forum says support is the team that reviews blocked links.
+3. Wait for their answer, then click **Publish Pin** again.
+
+### Database update (one time, before merging)
+
+Run these in the Supabase **SQL Editor**, in this order. They only add three columns and a safety check; no recipe, Pin or setting is changed.
+
+1. `supabase/proposed/pin_custom_destination/pin_custom_destination_before.sql` (read-only; `automatic_pins_migration_applied` must be `true`)
+2. `supabase/proposed/pin_custom_destination/pin_custom_destination_migration_sql_editor.sql`
+3. `supabase/proposed/pin_custom_destination/pin_custom_destination_verify.sql` (every row should say `true`)
+
+The safety check (a database trigger) lets only a signed-in admin change a custom link. The daily worker cannot change it, and nobody can change the link of a Pin that is publishing or published.
+
+### Step by step
+
+1. Open **Admin → Pinterest** and click a Pin that is **Ready**.
+2. Under **Original recipe URL**, click **Copy original URL**.
+3. In Bitly, make a short link for that address.
+4. Paste the short link into **Destination URL** and click **Save Pin**. The link is checked on the server: it must start with `https://` and be a public web address.
+5. Click **Open destination URL** and check that it opens the right recipe.
+6. In **Publish to Pinterest**, check that **Links to** shows your short link. Tick **I checked this Pin…** and click **Publish Pin**.
+7. You see either **Published** with the Pinterest Pin id, or Pinterest's own error message. The Pin is never posted twice: a second click is refused.
+
+To go back to the recipe's own page, click **Reset to original recipe URL**. Your custom link stays saved when you refresh the page, when the Pin is redrawn, and when the recipe's address changes. AI photos always carry Pinterest's AI label.
