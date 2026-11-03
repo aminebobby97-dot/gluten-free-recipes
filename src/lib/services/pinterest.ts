@@ -27,6 +27,7 @@ import {
   type PinMetadata,
   type PinRecipe,
 } from "@/lib/pins/metadata";
+import { checkDestinationUrl, pinLink } from "@/lib/pins/destination";
 import { analyzeClaimText } from "@/lib/recipes/gluten";
 import type { RecipeStatus } from "@/lib/recipes/types";
 import { dbError, ServiceError } from "./errors";
@@ -60,6 +61,14 @@ export interface PinterestPost {
   /** Migration 20261030000001: when the current publish attempt started, and who published. */
   publish_started_at?: string | null;
   published_via?: "admin" | "automation" | null;
+  /**
+   * Migration 20261103000001: the admin's own link (for example a Bitly link),
+   * used instead of destination_url when set. Only an admin's Save Pin or
+   * Reset click changes it; preparation never does.
+   */
+  custom_destination_url?: string | null;
+  custom_destination_set_at?: string | null;
+  custom_destination_set_by?: string | null;
 }
 
 /** Pins in these states belong to the (future) publisher and are never re-prepared or edited. */
@@ -313,12 +322,26 @@ export const pinContentSchema = z.object({
 export type PinContentInput = z.infer<typeof pinContentSchema>;
 
 /**
+ * The custom-link columns for a destination typed by an admin. Typing the
+ * recipe's own URL (or leaving it unchanged) stores no custom link, so the Pin
+ * keeps following the recipe's address.
+ */
+function destinationColumns(pin: PinterestPost, input: unknown, userId: string | null) {
+  const checked = checkDestinationUrl(input);
+  if (!checked.ok) throw new ServiceError("invalid_input", "Please fix the destination URL.", [{ field: "destination_url", message: checked.message }]);
+  const custom = checked.url === pin.destination_url ? null : checked.url;
+  if (custom === (pin.custom_destination_url ?? null)) return {};
+  return { custom_destination_url: custom, custom_destination_set_at: custom ? new Date().toISOString() : null, custom_destination_set_by: custom ? userId : null };
+}
+
+/**
  * Saves an admin's changes to a Pin's text. Validates Pinterest's limits and
  * the site's claims rules (no "tested", no medical safety claims). Returns
  * whether the image text changed, in which case the image must be redrawn.
  */
 export async function updatePinContent(db: SupabaseClient, pinId: string, input: unknown, userId: string | null): Promise<{ pin: PinterestPost; imageTextChanged: boolean }> {
   const parsed = pinContentSchema.safeParse(input);
+  const destinationInput = input && typeof input === "object" && "destination_url" in input ? (input as { destination_url: unknown }).destination_url : undefined;
   if (!parsed.success) {
     throw new ServiceError("invalid_input", "Please fix the highlighted fields.", parsed.error.issues.map((i) => ({ field: i.path.join("."), message: i.message })));
   }
@@ -338,10 +361,12 @@ export async function updatePinContent(db: SupabaseClient, pinId: string, input:
   const pin = existing as PinterestPost;
   if (LOCKED.includes(pin.publication_status)) throw new ServiceError("conflict", `This Pin is ${pin.publication_status} and can no longer be edited.`);
   const previousImageText = pin.image_text ?? "";
+  // Only when the form sent a destination: older forms and callers leave the link alone.
+  const destination = destinationInput === undefined ? {} : destinationColumns(pin, destinationInput, userId);
 
   const { data, error } = await db
     .from("pinterest_posts")
-    .update({ ...values, image_alt: values.image_alt || null, edited_at: new Date().toISOString(), edited_by: userId })
+    .update({ ...values, ...destination, image_alt: values.image_alt || null, edited_at: new Date().toISOString(), edited_by: userId })
     .eq("id", pinId)
     .in("publication_status", ["pending", "ready", "failed"])
     .select("*")
@@ -351,14 +376,36 @@ export async function updatePinContent(db: SupabaseClient, pinId: string, input:
   return { pin: data as PinterestPost, imageTextChanged: values.image_text !== previousImageText };
 }
 
+/**
+ * "Reset to original recipe URL": removes the admin's custom link, so the Pin
+ * links to the recipe page again. Published Pins are never changed.
+ */
+export async function resetPinDestination(db: SupabaseClient, pinId: string): Promise<PinterestPost> {
+  const { data: existing, error: loadError } = await db.from("pinterest_posts").select("*").eq("id", pinId).maybeSingle();
+  if (loadError) throw dbError("Load Pinterest Pin", loadError);
+  if (!existing) throw new ServiceError("not_found", "Pin not found.");
+  const pin = existing as PinterestPost;
+  if (LOCKED.includes(pin.publication_status)) throw new ServiceError("conflict", `This Pin is ${pin.publication_status} and can no longer be edited.`);
+  const { data, error } = await db
+    .from("pinterest_posts")
+    .update({ custom_destination_url: null, custom_destination_set_at: null, custom_destination_set_by: null })
+    .eq("id", pinId)
+    .in("publication_status", ["pending", "ready", "failed"])
+    .select("*")
+    .maybeSingle();
+  if (error) throw dbError("Reset the Pin's destination URL", error);
+  if (!data) throw new ServiceError("conflict", "This Pin changed status and can no longer be edited.");
+  return data as PinterestPost;
+}
+
 // ---------------------------------------------------------------------------
 // Pinterest API v5 "Create Pin" request
 // ---------------------------------------------------------------------------
 
 /**
  * The body of the official Pinterest API v5 "Create Pin" request
- * (POST https://api.pinterest.com/v5/pins). Sent only by the admin's manual
- * "Publish Pin" action.
+ * (POST https://api.pinterest.com/v5/pins). The link is the admin's custom
+ * destination when one is saved, otherwise the recipe page.
  */
 export interface PinterestCreatePinRequest {
   board_id: string;
@@ -372,18 +419,21 @@ export interface PinterestCreatePinRequest {
 }
 
 export function toCreatePinRequest(
-  pin: Pick<PinterestPost, "pin_title" | "pin_description" | "destination_url" | "image_url" | "image_alt" | "publication_status">,
+  pin: Pick<PinterestPost, "pin_title" | "pin_description" | "destination_url" | "custom_destination_url" | "image_url" | "image_alt" | "publication_status">,
   boardId: string,
   options: { aiModified?: boolean } = {},
 ): PinterestCreatePinRequest {
   if (pin.publication_status !== "ready") throw new ServiceError("not_ready", "Only Pins that are ready can be published.");
   if (!pin.image_url) throw new ServiceError("not_ready", "The Pin has no image.");
   if (!boardId) throw new ServiceError("invalid_input", "A Pinterest board id is required.");
+  // Checked again here, on the server, right before anything is sent.
+  const link = checkDestinationUrl(pinLink(pin));
+  if (!link.ok) throw new ServiceError("invalid_input", `The Pin's destination URL is not valid: ${link.message}`);
   return {
     board_id: boardId,
     title: pin.pin_title,
     description: pin.pin_description,
-    link: pin.destination_url,
+    link: link.url,
     ...(pin.image_alt ? { alt_text: pin.image_alt } : {}),
     media_source: { source_type: "image_url", url: pin.image_url },
     ...(options.aiModified ? { ai_disclosures: { values: ["AI_MODIFIED" as const] } } : {}),

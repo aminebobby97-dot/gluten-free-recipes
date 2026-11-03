@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { checkPinAction, preparePinAction, publishPinAction, savePinAction } from "@/app/admin/actions";
+import { checkPinAction, preparePinAction, publishPinAction, resetPinDestinationAction, savePinAction } from "@/app/admin/actions";
 import { ActionForm } from "@/components/admin/action-form";
+import { CopyButton } from "@/components/admin/copy-button";
 import { SubmitButton } from "@/components/admin/submit-button";
 import { Notice, PageHeader, Panel, StatusBadge, formatDateTime } from "@/components/admin/ui";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getPin, type AdminPinDetail } from "@/lib/data/admin";
 import { getPinterestConnection, tokenHealth, type PinterestConnection } from "@/lib/services/pinterest-connection";
+import { DESTINATION_URL_MAX, isShortenedLink, pinLink } from "@/lib/pins/destination";
 import { PIN_ALT_MAX, PIN_DESCRIPTION_MAX, PIN_IMAGE_TEXT_MAX, PIN_KEYWORDS_MAX, PIN_TITLE_MAX } from "@/lib/pins/metadata";
 
 export const metadata = { title: "Pinterest Pin" };
@@ -22,6 +24,10 @@ export default async function AdminPinPage({ params }: PageProps<"/admin/pintere
   const connection = await getPinterestConnection(supabase);
   const locked = ["publishing", "published", "cancelled"].includes(pin.publication_status);
   const recipeId = pin.recipe?.id ?? "";
+  const link = pinLink(pin);
+  const hasCustomLink = Boolean(pin.custom_destination_url);
+  // undefined: the custom destination migration is not applied yet.
+  const canEditLink = pin.custom_destination_url !== undefined;
 
   return (
     <div className="space-y-6">
@@ -124,14 +130,29 @@ export default async function AdminPinPage({ params }: PageProps<"/admin/pintere
               <Field label="Board" hint="The Pinterest board this Pin will go to.">
                 <input name="board_name" defaultValue={pin.board_name} maxLength={180} required className="field-input" />
               </Field>
-              <div>
-                <p className="field-label">Destination URL</p>
-                <a href={pin.destination_url} target="_blank" rel="noreferrer" className="break-all text-sm text-sage-dark hover:underline">
-                  {pin.destination_url}
-                </a>
-                <p className="field-hint">Always the recipe’s page on the live site, updated automatically if its address changes.</p>
-              </div>
+              {canEditLink ? (
+                <Field
+                  label="Destination URL"
+                  hint={`Where the Pin takes people. Starts as the recipe’s page; paste your own https:// link (for example a Bitly link you made) to replace it, then click Save Pin. Up to ${DESTINATION_URL_MAX} characters.`}
+                >
+                  <input name="destination_url" type="url" inputMode="url" defaultValue={link} maxLength={DESTINATION_URL_MAX} required pattern="https://.+" className="field-input" />
+                </Field>
+              ) : (
+                <div>
+                  <p className="field-label">Destination URL</p>
+                  <p className="break-all text-sm">{pin.destination_url}</p>
+                  <p className="field-hint">To use your own link here, apply the custom destination database update first (see docs/PINTEREST.md).</p>
+                </div>
+              )}
               <SubmitButton>Save Pin</SubmitButton>
+            </ActionForm>
+          )}
+          <DestinationDetails pin={pin} link={link} hasCustomLink={hasCustomLink} />
+          {!locked && hasCustomLink && (
+            <ActionForm action={resetPinDestinationAction} hidden={{ id: pin.id }} className="mt-4">
+              <SubmitButton className="btn btn-secondary" pendingLabel="Resetting…">
+                Reset to original recipe URL
+              </SubmitButton>
             </ActionForm>
           )}
         </Panel>
@@ -147,6 +168,38 @@ function Field({ label, hint, children }: { label: string; hint: string; childre
       {children}
       <span className="field-hint block">{hint}</span>
     </label>
+  );
+}
+
+function DestinationDetails({ pin, link, hasCustomLink }: { pin: AdminPinDetail; link: string; hasCustomLink: boolean }) {
+  return (
+    <div className="mt-6 space-y-3 border-t border-line pt-5 text-sm">
+      <div>
+        <p className="field-label">{pin.publication_status === "published" ? "The Pin links to" : "The Pin will link to"}</p>
+        <p className="break-all">
+          {link} <span className="text-xs text-ink-faint">({hasCustomLink ? "your custom link" : "original recipe URL"})</span>
+        </p>
+        <a href={link} target="_blank" rel="noreferrer noopener" className="mt-1 inline-block text-sage-dark underline">
+          Open destination URL
+        </a>
+        <span className="field-hint block">Check that it opens the right recipe before you publish.</span>
+      </div>
+      <div>
+        <p className="field-label">Original recipe URL</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="break-all">{pin.destination_url}</span>
+          <CopyButton value={pin.destination_url} label="Copy original URL" className="btn btn-secondary px-3 py-1 text-xs" />
+        </div>
+        <span className="field-hint block">Copy this into Bitly to make a short link, then paste the short link into Destination URL above.</span>
+      </div>
+      {isShortenedLink(link) && (
+        <Notice>
+          Pinterest follows short links to the page they lead to and checks that page. A short link does not get around a block: if Pinterest blocks your
+          website, it blocks the short link too, and Pinterest’s rules say not to use redirects to reach a site it does not allow. If Publish Pin shows a
+          “blocked” error, claim your website in Pinterest and ask Pinterest support to review it (see docs/PINTEREST.md).
+        </Notice>
+      )}
+    </div>
   );
 }
 
@@ -172,14 +225,28 @@ function PublishPanel({ pin, connection }: { pin: AdminPinDetail; connection: Pi
           </Link>
         </p>
       ) : (
-        <ActionForm action={publishPinAction} hidden={{ id: pin.id }} className="space-y-3">
+        <ActionForm action={publishPinAction} hidden={{ id: pin.id, expected_link: pinLink(pin) }} className="space-y-3">
           <p className="text-ink-soft">
-            Posts this one Pin to <strong>“{connection!.selected_board_name}”</strong> as @{connection!.pinterest_username ?? "your account"}.
+            Posts this one Pin, with its image, title, description and alt text, to <strong>“{connection!.selected_board_name}”</strong> as @
+            {connection!.pinterest_username ?? "your account"}.
           </p>
-          <label className="flex items-start gap-2">
-            <input type="checkbox" name="ai_modified" value="yes" defaultChecked={pin.recipe?.image_source === "ai"} className="mt-1" />
-            <span>Label the image as made or changed with AI (Pinterest’s AI label). {pin.recipe?.image_source === "ai" ? "This recipe’s photo was generated with AI." : ""}</span>
-          </label>
+          <p className="break-all text-ink-soft">
+            Links to: <strong className="text-ink">{pinLink(pin)}</strong>
+            <span className="block text-xs">Changed the Destination URL? Click Save Pin first: Publish Pin uses the saved link.</span>
+          </p>
+          {pin.recipe?.image_source === "ai" ? (
+            <label className="flex items-start gap-2">
+              {/* Always sent for AI photos; the server adds the label for them anyway. */}
+              <input type="hidden" name="ai_modified" value="yes" />
+              <input type="checkbox" checked disabled readOnly className="mt-1" />
+              <span>Labelled as made with AI (Pinterest’s AI label). This recipe’s photo was generated with AI, so the label is always added.</span>
+            </label>
+          ) : (
+            <label className="flex items-start gap-2">
+              <input type="checkbox" name="ai_modified" value="yes" className="mt-1" />
+              <span>Label the image as made or changed with AI (Pinterest’s AI label).</span>
+            </label>
+          )}
           <label className="flex items-start gap-2">
             <input type="checkbox" name="confirm" value="yes" required className="mt-1" />
             <span>I checked this Pin and want to post it to Pinterest now.</span>

@@ -20,6 +20,7 @@ import { PRIMARY_SITE_URL } from "@/lib/env";
 import { decryptSecret, deriveKey, encryptSecret, parseEncryptionKey, safeEqual, sign } from "@/lib/security/secret-box";
 import { dbError, ServiceError } from "./errors";
 import { PinterestApiError, PinterestClient, type FetchLike, type PinterestAppCredentials, type PinterestBoard, type PinterestTokens } from "./pinterest-api";
+import { pinLink } from "@/lib/pins/destination";
 import { toCreatePinRequest, type PinterestPost } from "./pinterest";
 
 // ---------------------------------------------------------------------------
@@ -407,10 +408,12 @@ export function sameLink(a: string | null | undefined, b: string | null | undefi
 
 /**
  * Publishes one Ready Pin through the manual Publish Pin button. Never retried
- * automatically.
+ * automatically. `expectedLink` is the destination the admin saw on the page:
+ * if the saved destination is different (changed in another tab, or reset),
+ * nothing is posted.
  */
-export async function publishPin(db: SupabaseClient, pinId: string, userId: string, options: { aiModified: boolean }, deps: PinterestDeps): Promise<PublishPinResult> {
-  return publishReadyPin(db, pinId, { via: "admin", publishedBy: userId, aiModified: options.aiModified }, deps);
+export async function publishPin(db: SupabaseClient, pinId: string, userId: string, options: { aiModified: boolean; expectedLink?: string }, deps: PinterestDeps): Promise<PublishPinResult> {
+  return publishReadyPin(db, pinId, { via: "admin", publishedBy: userId, aiModified: options.aiModified, expectedLink: options.expectedLink }, deps);
 }
 
 /**
@@ -428,7 +431,7 @@ export async function publishPin(db: SupabaseClient, pinId: string, userId: stri
 export async function publishReadyPin(
   db: SupabaseClient,
   pinId: string,
-  options: { via: PublishedVia; publishedBy: string | null; aiModified: boolean },
+  options: { via: PublishedVia; publishedBy: string | null; aiModified: boolean; expectedLink?: string },
   deps: PinterestDeps,
 ): Promise<PublishPinResult> {
   const { data: pinData, error: pinError } = await db.from("pinterest_posts").select("*, recipe:recipes(status, image_source)").eq("id", pinId).maybeSingle();
@@ -447,7 +450,12 @@ export async function publishReadyPin(
   const { selected_board_id: boardId, selected_board_name: boardName } = connection.connection;
   if (!boardId || !boardName) throw new ServiceError("not_ready", "Choose the Pinterest board to publish to first (Pinterest page, Board).");
 
-  const request = toCreatePinRequest(pin, boardId, { aiModified: options.aiModified });
+  if (options.expectedLink !== undefined && options.expectedLink !== pinLink(pin)) {
+    throw new ServiceError("conflict", `The Pin's saved destination URL is now ${pinLink(pin)}, not the one shown when you opened the page. Reload the page, check the link, then publish.`);
+  }
+
+  // A recipe photo made with AI always carries Pinterest's AI label, whatever the form sent.
+  const request = toCreatePinRequest(pin, boardId, { aiModified: options.aiModified || pin.recipe?.image_source === "ai" });
   // Fails early (before claiming the Pin) if the sign-in is unusable.
   let token = await getValidAccessToken(db, deps);
   const now = () => (deps.now?.() ?? new Date()).toISOString();
@@ -528,7 +536,8 @@ export async function checkPublishingPin(db: SupabaseClient, pinId: string, deps
 
   const token = await getValidAccessToken(db, deps);
   const pins = await deps.client.listBoardPins(token, boardId);
-  const match = pins.find((p) => sameLink(p.link, pin.destination_url));
+  // Pinterest may keep a custom (short) link as it is or store where it leads, so both count.
+  const match = pins.find((p) => sameLink(p.link, pinLink(pin)) || sameLink(p.link, pin.destination_url));
   const now = deps.now?.() ?? new Date();
   if (match) {
     await markPinPublished(db, pin.id, match.id, boardName, null, match.created_at ?? now.toISOString());

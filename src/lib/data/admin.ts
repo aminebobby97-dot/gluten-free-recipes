@@ -125,6 +125,9 @@ export interface AdminPinRow {
   board_name: string;
   image_text: string | null;
   destination_url: string;
+  /** The admin's own link (for example Bitly); undefined until migration 20261103000001 is applied. */
+  custom_destination_url?: string | null;
+  custom_destination_set_at?: string | null;
   image_url: string | null;
   publication_status: string;
   pinterest_pin_id: string | null;
@@ -149,11 +152,26 @@ function notMigrated(error: { code?: string } | null): boolean {
 const PIN_COLUMNS =
   "id,pin_title,pin_description,keywords,board_name,image_text,destination_url,image_url,publication_status,pinterest_pin_id,error_message,retry_count,prepared_at,edited_at,published_at,created_at,recipe:recipes(id,title,slug,status)";
 
+/** Added by migration 20261103000001 (custom destination URL). */
+const CUSTOM_DESTINATION_COLUMNS = ",custom_destination_url,custom_destination_set_at";
+
+/**
+ * Runs a Pin query with the custom destination columns, and again without them
+ * if that migration is not applied yet, so the pages keep working meanwhile.
+ */
+async function withCustomDestination<T>(run: (extra: string) => PromiseLike<{ data: T; error: { code?: string; message: string } | null }>) {
+  const first = await run(CUSTOM_DESTINATION_COLUMNS);
+  if (!notMigrated(first.error)) return first;
+  return run("");
+}
+
 /** Pins, newest first. Returns null until the Pinterest migration is applied. */
 export async function listPins(db: SupabaseClient, status?: string): Promise<AdminPinRow[] | null> {
-  let query = db.from("pinterest_posts").select(PIN_COLUMNS).order("created_at", { ascending: false }).limit(200);
-  if (status) query = query.eq("publication_status", status);
-  const { data, error } = await query;
+  const { data, error } = await withCustomDestination((extra) => {
+    let query = db.from("pinterest_posts").select(PIN_COLUMNS.replace(",recipe:", `${extra},recipe:`)).order("created_at", { ascending: false }).limit(200);
+    if (status) query = query.eq("publication_status", status);
+    return query;
+  });
   if (notMigrated(error)) return null;
   if (error) throw dbError("List Pinterest Pins", error);
   return (data ?? []) as unknown as AdminPinRow[];
@@ -167,11 +185,13 @@ export interface AdminPinDetail extends AdminPinRow {
 }
 
 export async function getPin(db: SupabaseClient, id: string): Promise<AdminPinDetail | null> {
-  const { data, error } = await db
-    .from("pinterest_posts")
-    .select(`${PIN_COLUMNS.replace(/,recipe:.*$/, "")},image_alt,image_path,board_id,recipe:recipes(id,title,slug,status,featured_image,pinterest_image,image_source)`)
-    .eq("id", id)
-    .maybeSingle();
+  const { data, error } = await withCustomDestination((extra) =>
+    db
+      .from("pinterest_posts")
+      .select(`${PIN_COLUMNS.replace(/,recipe:.*$/, "")}${extra},image_alt,image_path,board_id,recipe:recipes(id,title,slug,status,featured_image,pinterest_image,image_source)`)
+      .eq("id", id)
+      .maybeSingle(),
+  );
   if (notMigrated(error)) return null;
   if (error) throw dbError("Load Pinterest Pin", error);
   return (data as unknown as AdminPinDetail | null) ?? null;

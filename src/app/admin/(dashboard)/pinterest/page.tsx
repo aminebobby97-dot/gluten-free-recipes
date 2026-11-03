@@ -5,6 +5,7 @@ import { SubmitButton } from "@/components/admin/submit-button";
 import { EmptyState, FilterTabs, Notice, PageHeader, StatusBadge, formatDateTime } from "@/components/admin/ui";
 import { requireAdmin } from "@/lib/auth/admin";
 import { PIN_STATUSES, countPinsByStatus, listPins, type AdminPinRow } from "@/lib/data/admin";
+import { pinLink } from "@/lib/pins/destination";
 import { listRecipesWithoutPins } from "@/lib/services/pinterest";
 import { getPinterestConnection } from "@/lib/services/pinterest-connection";
 import { ConnectResult, PinterestConnectionPanel } from "./connection-panel";
@@ -96,13 +97,14 @@ function PinCard({ pin }: { pin: AdminPinRow }) {
             ))}
           </ul>
         )}
-        <a href={pin.destination_url} target="_blank" rel="noreferrer" className="truncate text-xs text-sage-dark hover:underline">
-          {pin.destination_url}
+        <a href={pinLink(pin)} target="_blank" rel="noreferrer noopener" className="truncate text-xs text-sage-dark hover:underline">
+          {pinLink(pin)}
         </a>
         <p className="text-xs text-ink-faint">
           Board: {pin.board_name}
           {pin.recipe && pin.recipe.status !== "published" ? " · recipe is not published" : ""}
           {pin.edited_at ? " · edited" : ""}
+          {pin.custom_destination_url ? " · custom link" : ""}
         </p>
         {pin.error_message && <p className="text-xs text-danger">{pin.error_message}</p>}
         <p className="mt-auto pt-1 text-xs text-ink-faint">{pin.published_at ? `Published ${formatDateTime(pin.published_at)}` : `Prepared ${formatDateTime(pin.prepared_at)}`}</p>
