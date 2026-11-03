@@ -31,6 +31,17 @@ Nothing is generated unless **all** of these allow it:
 
 A **dry run** is the exception: it works while automation is off, because it never saves a recipe. It generates and checks everything, stores the photo in a `dry-run/` folder, and logs the result.
 
+## Pork-free and alcohol-free rule
+
+Every AI recipe must be free from pork, pork-derived ingredients (bacon, ham, lard, pork gelatin...) and intentionally added alcohol (wine, beer, spirits, liqueurs, ordinary vanilla and other extracts...). It is enforced in four places:
+
+1. **The writer's instructions** tell Claude never to use or mention them, in any field.
+2. **A code check** (`src/lib/recipes/dietary.ts`) scans every field of each draft: title, ingredients, steps, substitutions, tips, FAQ, SEO text and the photo brief. A draft that fails gets the usual single repair round with the exact reason; if the repair still fails, the job fails like any other rejected draft (same retries and daily budget). The check never edits a recipe itself. The same check runs again right before the photo, so a recipe resumed from an earlier run is checked too.
+3. **The independent reviewer** is told to block pork, alcohol and hidden sources of them.
+4. **Keywords** for pork or alcohol dishes ("bacon wrapped dates", "beer bread") are marked *rejected* without any AI call, and the next keyword is used.
+
+Allowed: chicken, turkey or beef versions named as such ("turkey bacon", "beef gelatin"), wine and cider vinegars, and non-alcoholic substitutes named as such ("alcohol-free vanilla extract", "non-alcoholic red wine") with a note to check the label. Approving an AI draft in the admin dashboard also runs the check. Recipes that are already published are not changed.
+
 ## What it costs
 
 You pay Anthropic and OpenAI directly, per use. These are estimates; the real figures appear in the job log after your first dry run.

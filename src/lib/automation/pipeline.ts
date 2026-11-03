@@ -14,6 +14,7 @@
 
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { analyzeDietaryRestrictions, dietaryRejectionReason, keywordViolation } from "@/lib/recipes/dietary";
 import { recipeInputSchema } from "@/lib/recipes/schema";
 import { dbError } from "@/lib/services/errors";
 import { claimJob, failJob, getOrCreateDailyJob, MAX_JOB_RETRIES, recordJobStep, toJobDate, JOB_LEASE_MINUTES, type PublishingJob } from "@/lib/services/jobs";
@@ -69,6 +70,8 @@ export type PipelineResult =
 /** Writer gets one repair round after its first draft. */
 export const MAX_REPAIR_ROUNDS = 1;
 export const MAX_PHOTO_ATTEMPTS = 3;
+/** Keywords for pork or alcohol dishes skipped in one run before giving up. */
+export const MAX_KEYWORD_SKIPS = 10;
 
 class PipelineError extends Error {
   constructor(
@@ -242,14 +245,33 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
   try {
     // --- 1. Keyword ------------------------------------------------------------
     const keyword = await step("select_keyword", async () => {
-      if (cp.keyword_id) return loadKeyword(db, cp.keyword_id);
-      if (mode === "dry_run") return previewKeyword(db, opts.dryRunKeyword);
-      const { data, error } = await db.rpc("claim_next_keyword", { p_job_id: jobId });
-      if (error) throw dbError("Claim keyword", error);
-      const claimed = data as KeywordRow | null;
-      if (!claimed?.id) throw new PipelineError("No usable keywords left. Import more keywords in /admin/keywords.");
-      await saveCheckpoint({ keyword_id: claimed.id });
-      return claimed;
+      if (cp.keyword_id) {
+        const saved = await loadKeyword(db, cp.keyword_id);
+        // A keyword claimed before the pork-free and alcohol-free rule existed.
+        // Only an unfinished job reaches here; a corrected draft is still checked in full.
+        if (cp.recipe || cp.corrected_draft || !keywordViolation(saved.keyword)) return saved;
+        await rejectKeyword(db, jobId, saved);
+      } else if (mode === "dry_run") {
+        const preview = await previewKeyword(db, opts.dryRunKeyword);
+        const violation = keywordViolation(preview.keyword);
+        if (violation) throw new PipelineError(`The keyword "${preview.keyword}" asks for a dish with ${violation.term}, which recipes must not contain. Try another keyword.`);
+        return preview;
+      }
+      // Keywords for pork or alcohol dishes are rejected without spending
+      // anything on AI, and the next keyword in the queue is tried.
+      for (let tries = 0; tries < MAX_KEYWORD_SKIPS; tries++) {
+        const { data, error } = await db.rpc("claim_next_keyword", { p_job_id: jobId });
+        if (error) throw dbError("Claim keyword", error);
+        const claimed = data as KeywordRow | null;
+        if (!claimed?.id) throw new PipelineError("No usable keywords left. Import more keywords in /admin/keywords.");
+        if (keywordViolation(claimed.keyword)) {
+          await rejectKeyword(db, jobId, claimed);
+          continue;
+        }
+        await saveCheckpoint({ keyword_id: claimed.id });
+        return claimed;
+      }
+      throw new PipelineError(`The next ${MAX_KEYWORD_SKIPS} keywords were all for pork or alcohol dishes and were rejected. Import more keywords in /admin/keywords.`);
     });
     keywordId = keyword.id || null;
 
@@ -278,6 +300,14 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
           : await callAi("recipe", providers.writer, input, round + 2));
       }
     });
+
+    // Final pork-free and alcohol-free gate. The checks above already ran on a
+    // new draft; this also covers a recipe resumed from an earlier checkpoint,
+    // so nothing that breaks the rule can reach the photo, save or publish steps.
+    const dietary = analyzeDietaryRestrictions(recipe);
+    if (dietary.length > 0) {
+      throw new PipelineError(dietaryRejectionReason(dietary), dietary.map((v) => ({ severity: "blocking", source: "dietary", field: v.field, message: v.message })));
+    }
 
     // --- 3. Photo ------------------------------------------------------------------
     // One landscape photo for the site. The Pinterest Pin is drawn from this same
@@ -474,6 +504,15 @@ async function evaluate(
     for (const i of result.output.issues) issues.push({ ...i, source: "review" });
   }
   return { recipe, issues };
+}
+
+/** Takes a pork or alcohol keyword out of the queue for good, with the reason. */
+async function rejectKeyword(db: SupabaseClient, jobId: string, keyword: KeywordRow) {
+  const violation = keywordViolation(keyword.keyword)!;
+  const reason = `Rejected by the pork-free and alcohol-free rule: the keyword asks for a dish with ${violation.term} ("${violation.match}").`;
+  const { error } = await db.from("keywords").update({ status: "rejected", last_error: reason }).eq("id", keyword.id);
+  if (error) throw dbError("Reject keyword", error);
+  await logEvent(db, jobId, "select_keyword", "info", `Skipped the keyword "${keyword.keyword}". ${reason}`);
 }
 
 async function loadKeyword(db: SupabaseClient, id: string): Promise<KeywordRow> {

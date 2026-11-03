@@ -3,6 +3,7 @@
 // Phase 2 checks (consistency, allergens, SEO, keyword targeting). Duplicate
 // checks need the database and run in the pipeline.
 
+import { analyzeDietaryRestrictions } from "@/lib/recipes/dietary";
 import { getPublishReadiness } from "@/lib/recipes/validation";
 import { compareAllergens, undeclaredOptionalAllergens } from "./allergens";
 import { checkConsistency } from "./consistency";
@@ -45,6 +46,10 @@ export function validateGeneratedRecipe(recipe: GeneratedRecipe, keyword: Keywor
     if (w.field === "is_tested" || w.field === "nutrition") continue; // expected for generated recipes
     add("readiness", "warning", w.field, w.message);
   }
+
+  // Pork-free and alcohol-free, in every field including substitutions, tips,
+  // FAQ and the photo brief. Always blocking.
+  for (const v of analyzeDietaryRestrictions(recipe)) add("dietary", "blocking", v.field, v.message);
 
   for (const c of checkConsistency(recipe)) add("consistency", c.severity, c.field, c.message);
   for (const a of compareAllergens(recipe.allergens, recipe.ingredients)) add("allergens", a.severity, "allergens", a.message);

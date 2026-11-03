@@ -38,7 +38,7 @@ export interface Issue {
   severity: "blocking" | "warning";
   field: string;
   message: string;
-  source: "schema" | "readiness" | "consistency" | "allergens" | "seo" | "duplicate" | "review" | "photo";
+  source: "schema" | "readiness" | "consistency" | "allergens" | "seo" | "duplicate" | "review" | "photo" | "dietary";
 }
 
 /** One AI request's result, with what it cost. */
