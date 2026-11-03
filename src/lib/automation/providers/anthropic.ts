@@ -213,6 +213,7 @@ function repairPrompt(input: RepairInput): string {
     writerPrompt(input),
     "",
     "A draft was written for this keyword but failed checks. Return the complete corrected recipe, fixing every blocking issue and as many warnings as make sense. Change only what the issues require.",
+    "If an issue is about pork or alcohol, replace that ingredient with a compliant one and update the whole recipe to match: the ingredient list, every step that uses it, quantities, times, the introduction, substitutions, tips, FAQ, allergens and the photo brief. Never just delete it from one place.",
     "",
     "Issues:",
     ...input.issues.map((i) => `- [${i.severity}] ${i.field}: ${i.message}`),

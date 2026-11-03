@@ -6,6 +6,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeRecipe, recipeInputSchema, type ParsedRecipeInput } from "@/lib/recipes/schema";
 import type { Recipe } from "@/lib/recipes/types";
+import { analyzeDietaryRestrictions } from "@/lib/recipes/dietary";
 import { getPublishReadiness, type PublishReadiness } from "@/lib/recipes/validation";
 import { dbError, ServiceError } from "./errors";
 import { revalidateRecipe } from "./revalidate";
@@ -79,6 +80,19 @@ export async function publishRecipe(db: SupabaseClient, id: string, options: { p
     throw new ServiceError("not_ready", "The recipe is not ready to publish.", readiness.errors);
   }
   if (recipe.status === "published") return { recipe, readiness };
+  // AI recipes must be pork-free and alcohol-free. Checked here too, so a draft
+  // saved for review cannot be approved if someone edited pork or alcohol into it.
+  // Already published recipes are left as they are.
+  if (recipe.source === "ai") {
+    const dietary = analyzeDietaryRestrictions(recipe);
+    if (dietary.length > 0) {
+      throw new ServiceError(
+        "not_ready",
+        "AI recipes must be free from pork and alcohol.",
+        dietary.map((v) => ({ field: v.field, message: v.message })),
+      );
+    }
+  }
 
   const publishedAt = (options.publishAt ?? (recipe.published_at ? new Date(recipe.published_at) : new Date())).toISOString();
   const { data: row, error } = await db
