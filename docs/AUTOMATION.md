@@ -6,7 +6,7 @@ This guide sets up the Phase 2 automation: one AI-written gluten-free recipe a d
 
 A GitHub Actions workflow runs a small program (the "worker"). The worker:
 
-1. Picks the best unused keyword from your Keywords list, skipping hard ones and ones too similar to an existing recipe.
+1. Picks the best unused keyword from your Keywords list, skipping hard ones and ones too similar to an existing recipe. If fewer than 30 keywords are usable, it first adds new keyword ideas (see [Keyword queue and automatic top-up](#keyword-queue-and-automatic-top-up)).
 2. Asks Claude (Anthropic) to write the recipe as structured data.
 3. Checks it in code: gluten ingredients and cross-contact notes, allergens, ingredients used in the steps, times, oven and food-safety temperatures, SEO fields, duplicates.
 4. Asks a second, independent Claude review to look for errors. A failing draft gets one repair attempt, then the run stops.
@@ -43,6 +43,22 @@ Every AI recipe must be free from pork, pork-derived ingredients (bacon, ham, la
 Allowed: chicken, turkey or beef versions named as such ("turkey bacon", "beef gelatin"), wine and cider vinegars, and non-alcoholic substitutes named as such ("alcohol-free vanilla extract", "non-alcoholic red wine") with a note to check the label. **Soy sauce and similar condiments** (soy sauce, tamari, coconut aminos, fish sauce, oyster sauce, hoisin, miso, gochujang, teriyaki sauce, ponzu, bottled cooking sauces) are never assumed safe: in the ingredient list and in substitutions, tips and FAQ answers, the same item must say it is labeled both gluten-free and alcohol-free. Steps may refer to one only when the ingredient list has a compliant version. "Regular soy sauce" is always rejected, and XO sauce counts as pork (it contains ham).
 
 Approving an AI draft in the admin dashboard also runs the check. Recipes that are already published are not changed.
+
+## Keyword queue and automatic top-up
+
+Each recipe uses one keyword. A keyword is **usable** when its status is New, it has no recipe yet, it failed fewer than 3 times, and its difficulty is unknown or within the maximum in Admin → Automation. The admin dashboard shows this number (Overview → **Usable keywords**, and the **Keyword queue** panel on the Keywords page), with the reasons the other keywords are left out.
+
+When fewer than **30** keywords are usable, the daily run tops the queue up before it picks one:
+
+1. It asks Claude once for 42 long-tail keyword ideas: 7 each for breakfast, lunch, dinner, desserts, snacks and baking. Claude is told what the site already covers, and that it has no search data.
+2. Every idea is checked in code. It is dropped if it names pork or a pork product, alcohol, or a gluten grain (wheat, barley, rye, malt...); if it is generic ("gluten free dinner ideas"); if it does not say "gluten free"; or if it is the same as, or too similar to, any keyword you have (whatever its status) or any recipe title or focus keyword, using the same similarity limit as the keyword picker.
+3. The ideas that pass become ordinary New keywords, marked "AI suggestion" in the Source column. They never get a search volume, difficulty or data source; only an import from a real keyword tool can add those.
+
+Limits: one AI call per try, at most 2 tries per UTC day, and none after a successful top-up that day (the database enforces this too). The call is checked against the $3 daily AI budget before it is sent and its cost is logged like every other AI call (about $0.05 to $0.25). It does not change the one-recipe-per-day limit, the gluten, pork-free and alcohol-free checks on the recipe itself, or anything about Pinterest.
+
+If the top-up fails (Claude error, budget, every idea screened out), the reason is shown on the Keywords page and in the job log. The run then goes on with the keywords that are left; if none are left, it stops before any recipe AI call with a message that says why, and the next day's run tries the top-up again. Dry runs never add keywords.
+
+The top-up needs the database migration in [Keyword top-up migration](#keyword-top-up-migration). Until it is applied, the run skips the top-up and says so.
 
 ## What it costs
 
@@ -182,6 +198,23 @@ Once everything below is switched on, each day at 02:00 UTC (09:00 in Bangkok) t
 
 Any of these turns the run red, and GitHub emails you about failed scheduled runs. To retry the same day, run the workflow by hand with mode `auto`: the day's job resumes from where it stopped, and waiting Pins are handled.
 
+## Keyword top-up migration
+
+This adds the table that records each automatic keyword top-up and lets the AI log record keyword-idea calls. It only adds things and switches nothing on. Apply it **before** merging the pull request.
+
+The files are in `supabase/proposed/keyword_replenishment/` (also in the project files, `keyword-replenishment/` folder):
+
+| Order | File | What it does |
+| --- | --- | --- |
+| 0 (optional) | `keyword_queue_inspect.sql` | Read-only. Shows how many keywords are usable and why the others are left out |
+| 1 | `keyword_replenishment_before.sql` | Read-only check. Changes nothing |
+| 2 | `keyword_replenishment_migration_sql_editor.sql` | The update, in one transaction (all or nothing) |
+| 3 | `keyword_replenishment_verify.sql` | Read-only check. Every row should say **true** |
+
+1. Supabase → your project → **SQL Editor** → **New query**. Paste all of file 1 and click **Run**. `automation_migration_applied` must be **true**; `has_keyword_replenishments` and `attempts_allow_keywords` should be **false**.
+2. **New query**. Paste all of file 2 and click **Run**. You should see "Success. No rows returned". If you see an error, nothing was changed; send it to Claude. It is safe to run again.
+3. **New query**. Paste all of file 3 and click **Run**. Every row should say **true**.
+
 ### Step A: Apply the database migration
 
 This lets the worker read and refresh the (still encrypted) Pinterest sign-in, and adds two fields to Pins. It only adds things and switches nothing on. Apply it **before** merging the pull request, because the new code saves those fields when a Pin is published.
@@ -223,7 +256,8 @@ Do these one at a time, in order, and check each result before the next.
 | `Missing ANTHROPIC_API_KEY` (or another name) | The secret or variable is missing or misspelled in the `automation` environment (Step 5) |
 | `Automation is turned off.` | Expected for review runs until Step 8. Use `dry_run` to test |
 | `Daily AI budget reached` | Wait until tomorrow (UTC) or raise the budget in Admin → Automation |
-| `No usable keywords left` | Import more keywords, or raise the difficulty limit in Admin → Automation |
+| `No usable keywords left (...)` | The message lists what the keywords are used for and what the automatic top-up did. Import more keywords, raise the difficulty limit in Admin → Automation, or wait for the next run's top-up. The Keywords page shows the details |
+| `Automatic keyword top-up did not run: ... migration is not applied` | Apply the [Keyword top-up migration](#keyword-top-up-migration) |
 | `The recipe failed N check(s)` | Normal: a draft that fails is never saved. The job log lists each finding. The keyword is retried on the next run |
 | `The corrected draft already failed its checks` | A corrected draft is only reviewed once. Replace it with a new correction (see Recovering a rejected draft) |
 | `Site refresh failed with HTTP 401` | `REVALIDATE_SECRET` differs between Vercel and GitHub, or Vercel was not redeployed |

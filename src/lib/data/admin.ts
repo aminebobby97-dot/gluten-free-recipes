@@ -66,6 +66,7 @@ export interface AdminKeywordRow {
   search_volume: number | null;
   keyword_difficulty: number | null;
   data_source: string | null;
+  notes: string | null;
   created_at: string;
   category: { short_name: string } | null;
   recipe: { title: string; id: string } | null;
@@ -74,7 +75,7 @@ export interface AdminKeywordRow {
 export async function listKeywords(db: SupabaseClient, status?: string): Promise<AdminKeywordRow[]> {
   let query = db
     .from("keywords")
-    .select("id,keyword,status,search_volume,keyword_difficulty,data_source,created_at,category:categories(short_name),recipe:recipes(id,title)")
+    .select("id,keyword,status,search_volume,keyword_difficulty,data_source,notes,created_at,category:categories(short_name),recipe:recipes(id,title)")
     .order("created_at", { ascending: false })
     .limit(500);
   if (status) query = query.eq("status", status);

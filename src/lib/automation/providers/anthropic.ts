@@ -9,8 +9,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { FALLBACK_PRICE_MODEL, TEXT_MODEL_PRICES, estimateTextCostUsd, textCostUsd, type TokenUsage } from "../cost";
-import { AiCallError, type AiProviders, type AiResult, type AiStep, type GeneratedRecipe, type Photo, type PhotoVerdict, type RepairInput, type ReviewVerdict, type WriterInput } from "../types";
+import { AiCallError, type AiProviders, type AiResult, type AiStep, type GeneratedRecipe, type KeywordIdea, type KeywordIdeaRequest, type Photo, type PhotoVerdict, type RepairInput, type ReviewVerdict, type WriterInput } from "../types";
 import {
+  KEYWORD_JSON_SCHEMA,
+  KEYWORD_PROMPT_VERSION,
+  KEYWORD_SYSTEM,
   PHOTO_CHECK_JSON_SCHEMA,
   PHOTO_CHECK_SYSTEM,
   PROMPT_VERSION,
@@ -24,7 +27,7 @@ export const DEFAULT_TEXT_MODEL = "claude-opus-5-5";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 /** Output limits include adaptive thinking, so they leave room for it. */
-const MAX_TOKENS = { writer: 24_000, reviewer: 12_000, photoCheck: 6_000 } as const;
+const MAX_TOKENS = { writer: 24_000, reviewer: 12_000, photoCheck: 6_000, keywords: 8_000 } as const;
 /** Tokens an image adds to a request (a 1024x1536 photo is about 2,100). */
 const IMAGE_TOKENS = 2_500;
 
@@ -103,7 +106,7 @@ export interface AnthropicProviderOptions {
 }
 
 /** Builds the Claude-backed providers. The photographer comes from the image provider. */
-export function createAnthropicProviders(opts: AnthropicProviderOptions = {}): Omit<AiProviders, "photographer"> {
+export function createAnthropicProviders(opts: AnthropicProviderOptions = {}): Omit<AiProviders, "photographer" | "keywordWriter"> & { keywordWriter: AiStep<KeywordIdeaRequest, KeywordIdea[]> } {
   const model = opts.model ?? DEFAULT_TEXT_MODEL;
   if (!TEXT_MODEL_PRICES[model]) throw new Error(`No price is configured for model "${model}".`);
   const client = opts.client ?? (new Anthropic({ apiKey: opts.apiKey ?? process.env.ANTHROPIC_API_KEY, maxRetries: 3 }) as unknown as ClaudeClient);
@@ -119,6 +122,7 @@ export function createAnthropicProviders(opts: AnthropicProviderOptions = {}): O
     maxTokens: number,
     effort: Effort,
     parse: (json: unknown) => T,
+    promptVersion: string = PROMPT_VERSION,
   ): Promise<AiResult<T>> {
     const reply = await client.beta.messages
       .stream({
@@ -152,7 +156,7 @@ export function createAnthropicProviders(opts: AnthropicProviderOptions = {}): O
       output,
       provider: "anthropic",
       model: reply.model || model,
-      promptVersion: PROMPT_VERSION,
+      promptVersion,
       costUsd,
       inputTokens: reply.usage.input_tokens + (reply.usage.cache_read_input_tokens ?? 0) + (reply.usage.cache_creation_input_tokens ?? 0),
       outputTokens: reply.usage.output_tokens,
@@ -192,7 +196,27 @@ export function createAnthropicProviders(opts: AnthropicProviderOptions = {}): O
       ),
   };
 
-  return { writer, repairer, reviewer, photoChecker };
+  const keywordWriter: AiStep<KeywordIdeaRequest, KeywordIdea[]> = {
+    estimateUsd: (input) => estimate(roughTokens(KEYWORD_SYSTEM + keywordPrompt(input)), MAX_TOKENS.keywords),
+    run: (input) =>
+      ask(KEYWORD_SYSTEM, [text(keywordPrompt(input))], KEYWORD_JSON_SCHEMA, MAX_TOKENS.keywords, "medium", (json) => keywordIdeasSchema.parse(json).keywords, KEYWORD_PROMPT_VERSION),
+  };
+
+  return { writer, repairer, reviewer, photoChecker, keywordWriter };
+}
+
+const keywordIdeasSchema = z.object({ keywords: z.array(z.object({ keyword: z.string(), category_slug: z.string() })) });
+
+export function keywordPrompt({ categories, avoid }: KeywordIdeaRequest): string {
+  const total = categories.reduce((sum, c) => sum + c.count, 0);
+  const lines = [
+    `Suggest ${total} new keyword ideas, this many in each category (use the slug for category_slug):`,
+    ...categories.map((c) => `- ${c.slug} (${c.name}): ${c.count}`),
+  ];
+  if (avoid.length > 0) {
+    lines.push("", "Already covered (keywords and recipes the site has, shortened to what they are about). Suggest clearly different dishes:", ...avoid.map((a) => `- ${a}`));
+  }
+  return lines.join("\n");
 }
 
 function writerPrompt({ keyword, categories, existingTitles }: WriterInput): string {

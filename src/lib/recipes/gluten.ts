@@ -39,6 +39,21 @@ const ALWAYS_GLUTEN: Array<[RegExp, string]> = [
 ];
 
 /**
+ * The first grain that always contains gluten named in a short text such as a
+ * keyword ("gluten free rye bread" -> "rye"). "Wheat-free" does not count.
+ */
+export function alwaysGlutenTerm(text: string): string | null {
+  for (const [pattern, term] of ALWAYS_GLUTEN) {
+    for (const match of text.matchAll(new RegExp(pattern.source, "gi"))) {
+      const after = text.slice((match.index ?? 0) + match[0].length);
+      if (/^[- ]free\b/i.test(after)) continue;
+      return term;
+    }
+  }
+  return null;
+}
+
+/**
  * Foods that normally contain gluten but exist in gluten-free versions. They are
  * acceptable only when the ingredient explicitly names a gluten-free version.
  */

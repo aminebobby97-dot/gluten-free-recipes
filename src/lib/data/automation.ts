@@ -6,6 +6,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dbError } from "@/lib/services/errors";
+import { loadKeywordQueueStats, REPLENISH_BELOW, type KeywordQueueStats } from "@/lib/automation/keyword-queue";
 import { JOB_RECIPE } from "./admin";
 
 /** PostgREST / Postgres codes for a table, column or function that does not exist. */
@@ -128,5 +129,52 @@ export async function getJobDetail(db: SupabaseClient, id: string): Promise<JobD
     job: { mode: null, trigger: null, cost_usd: null, run_url: null, ...job } as JobDetail["job"],
     events: events.error ? null : ((events.data ?? []) as JobEvent[]),
     attempts: attempts.error ? null : ((attempts.data ?? []).map((a) => ({ ...a, cost_usd: Number(a.cost_usd) })) as GenerationAttempt[]),
+  };
+}
+
+export interface KeywordReplenishment {
+  id: string;
+  run_date: string;
+  status: "running" | "succeeded" | "failed";
+  usable_before: number;
+  usable_after: number | null;
+  requested: number;
+  suggested: number;
+  inserted: number;
+  rejected: number;
+  rejections: Array<{ keyword: string; reason: string; detail?: string }>;
+  cost_usd: number;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface KeywordQueueOverview {
+  stats: KeywordQueueStats;
+  /** Below this many usable keywords the daily worker tops the queue up. */
+  threshold: number;
+  /** Newest first. Null until the keyword replenishment migration is applied. */
+  replenishments: KeywordReplenishment[] | null;
+}
+
+/** Usable keyword count (what the worker can really pick) and the latest automatic top-ups. */
+export async function getKeywordQueueOverview(db: SupabaseClient, limit = 5): Promise<KeywordQueueOverview> {
+  const { data: settings, error } = await db.from("automation_settings").select("max_keyword_difficulty").eq("id", true).maybeSingle();
+  if (error && !isMissing(error)) throw dbError("Load automation settings", error);
+  // Before the automation migration there is no difficulty limit (the Phase 2 default is 40).
+  const maxDifficulty = settings?.max_keyword_difficulty == null ? 100 : Number(settings.max_keyword_difficulty);
+  const [stats, runs] = await Promise.all([
+    loadKeywordQueueStats(db, maxDifficulty),
+    db
+      .from("keyword_replenishments")
+      .select("id,run_date,status,usable_before,usable_after,requested,suggested,inserted,rejected,rejections,cost_usd,error_message,started_at,finished_at")
+      .order("started_at", { ascending: false })
+      .limit(limit),
+  ]);
+  if (runs.error && !isMissing(runs.error)) throw dbError("Load keyword top-ups", runs.error);
+  return {
+    stats,
+    threshold: REPLENISH_BELOW,
+    replenishments: runs.error ? null : ((runs.data ?? []).map((r) => ({ ...r, cost_usd: Number(r.cost_usd) })) as KeywordReplenishment[]),
   };
 }
