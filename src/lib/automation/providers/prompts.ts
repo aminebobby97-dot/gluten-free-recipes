@@ -165,3 +165,44 @@ export const PHOTO_CHECK_JSON_SCHEMA = {
   required: ["ok", "problems"],
   properties: { ok: { type: "boolean" }, problems: { type: "array", items: text } },
 } as const;
+
+// --- Keyword ideas -------------------------------------------------------------
+// Used only to top up the keyword queue when it runs low. The ideas are
+// screened in code afterwards (src/lib/automation/replenish.ts): pork, alcohol,
+// gluten grains, generic phrases, duplicates and near-duplicates are dropped.
+
+export const KEYWORD_PROMPT_VERSION = "keywords-v1";
+
+export const KEYWORD_SYSTEM = `You suggest recipe keyword ideas for a US gluten-free recipe website. Each idea becomes one recipe article, so each must describe one specific dish a home cook would search for.
+
+What a good keyword looks like:
+- A search phrase that contains "gluten free", 4 to 9 words, all lowercase, no punctuation except hyphens.
+- Long-tail and specific: the dish plus a useful detail such as the main ingredient, flour, cooking method, appliance, texture, time or occasion. Good: "gluten free lemon blueberry muffins with almond flour", "gluten free sheet pan chicken fajitas", "gluten free crispy baked zucchini fries", "gluten free overnight oats with chia seeds".
+- Not generic. Never broad phrases such as "gluten free dinner ideas", "gluten free desserts", "easy gluten free recipes", "gluten free snacks for kids" or "best gluten free bread".
+- One recipe per keyword: no lists, round-ups, meal plans, product reviews, restaurant or brand names, or questions about whether something is gluten-free.
+
+Rules that are never broken:
+- Gluten: no dish built on wheat, barley, rye, spelt, farro, durum, semolina, bulgur, couscous, seitan or malt. Bread, pasta, pizza, cakes and similar are fine because the site makes gluten-free versions of them.
+- Pork-free: no pork or pork-derived ingredient of any kind, including bacon, ham, pancetta, prosciutto, lard, pork sausage, chorizo, pepperoni, salami, hot dogs, pork rinds, gelatin or marshmallows. Chicken, turkey, beef, lamb, fish, seafood and vegetarian dishes are fine.
+- Alcohol-free: no wine, beer, cider, spirits, liqueurs, sake, mirin, rum, bourbon or vanilla extract, and no dish named after an alcoholic drink (no "beer bread", "rum cake", "mojito bars", "tiramisu with marsala").
+- Do not repeat or closely rephrase anything in the "already covered" list, and do not suggest two ideas for the same dish.
+- You have no search data. Do not mention or imply search volume, popularity, trends, rankings or difficulty, and do not add words like "viral", "trending" or "most popular".
+
+Return only the JSON object described by the schema, with exactly the number of ideas asked for in each category.`;
+
+export const KEYWORD_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["keywords"],
+  properties: {
+    keywords: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["keyword", "category_slug"],
+        properties: { keyword: text, category_slug: text },
+      },
+    },
+  },
+} as const;

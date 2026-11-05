@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ClaudeOutputError, createAnthropicProviders, replyCostUsd, type ClaudeClient, type ClaudeReply } from "@/lib/automation/providers/anthropic";
-import { RECIPE_JSON_SCHEMA, REVIEW_JSON_SCHEMA, PHOTO_CHECK_JSON_SCHEMA } from "@/lib/automation/providers/prompts";
+import { KEYWORD_JSON_SCHEMA, RECIPE_JSON_SCHEMA, REVIEW_JSON_SCHEMA, PHOTO_CHECK_JSON_SCHEMA } from "@/lib/automation/providers/prompts";
 import { AiCallError } from "@/lib/automation/types";
 import { CATEGORY, goodRecipe } from "./support/automation-fixtures";
 
@@ -131,5 +131,25 @@ describe("Claude providers", () => {
 
   it("refuses a model with no configured price", () => {
     expect(() => createAnthropicProviders({ client: fakeClient([]).client, model: "claude-unknown" })).toThrow(/No price/);
+  });
+});
+
+describe("Claude keyword ideas", () => {
+  it("asks for keyword ideas with their own schema and prompt version, and stays under 25 cents", async () => {
+    const ideas = { keywords: [{ keyword: "gluten free lemon poppy seed loaf cake", category_slug: "gluten-free-baking" }] };
+    const { client, requests } = fakeClient([reply(ideas)]);
+    const { keywordWriter } = createAnthropicProviders({ client });
+    const input = { categories: [{ slug: "gluten-free-baking", name: "Gluten-Free Baking", count: 7 }], avoid: Array.from({ length: 600 }, (_, i) => `dish number ${i}`) };
+    const result = await keywordWriter.run(input);
+    expect(result).toMatchObject({ output: ideas.keywords, promptVersion: "keywords-v1" });
+    expect((requests[0] as { output_config: { format: { schema: unknown } } }).output_config.format.schema).toBe(KEYWORD_JSON_SCHEMA);
+    // Worst case with a 600-topic avoid list: every output token at the priciest fallback model.
+    expect(keywordWriter.estimateUsd(input)).toBeLessThan(0.25);
+  });
+
+  it("rejects a reply that is not a list of ideas", async () => {
+    const { client } = fakeClient([reply({ keywords: "none" })]);
+    const { keywordWriter } = createAnthropicProviders({ client });
+    await expect(keywordWriter.run({ categories: [], avoid: [] })).rejects.toBeInstanceOf(ClaudeOutputError);
   });
 });

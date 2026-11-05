@@ -1,9 +1,11 @@
 import { importKeywordsAction, updateKeywordStatusAction } from "@/app/admin/actions";
 import { ActionForm } from "@/components/admin/action-form";
+import { KeywordQueuePanel } from "@/components/admin/keyword-queue";
 import { SubmitButton } from "@/components/admin/submit-button";
 import { EmptyState, FilterTabs, PageHeader, Panel, StatusBadge, Table } from "@/components/admin/ui";
 import { requireAdmin } from "@/lib/auth/admin";
 import { listKeywords } from "@/lib/data/admin";
+import { getKeywordQueueOverview } from "@/lib/data/automation";
 
 export const metadata = { title: "Keywords" };
 
@@ -13,11 +15,15 @@ export default async function AdminKeywordsPage({ searchParams }: PageProps<"/ad
   const { supabase } = await requireAdmin();
   const params = await searchParams;
   const status = typeof params.status === "string" && STATUSES.includes(params.status) ? params.status : undefined;
-  const keywords = await listKeywords(supabase, status);
+  const [keywords, queue] = await Promise.all([listKeywords(supabase, status), getKeywordQueueOverview(supabase)]);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Keywords" description="Keyword ideas for future recipes. The automation will pick the oldest unused keyword once it is built." />
+      <PageHeader
+        title="Keywords"
+        description="Keyword ideas for future recipes. The daily run picks the next usable keyword, and adds new AI keyword ideas by itself when fewer than 30 are usable."
+      />
+      <KeywordQueuePanel overview={queue} />
       <Panel title="Import keywords">
         <ActionForm action={importKeywordsAction}>
           <p className="mb-3 text-sm text-ink-soft">
@@ -50,7 +56,7 @@ export default async function AdminKeywordsPage({ searchParams }: PageProps<"/ad
               <td className="px-4 py-3 text-ink-soft">{k.category?.short_name ?? "—"}</td>
               <td className="px-4 py-3 text-ink-soft">{k.search_volume ?? <span className="text-ink-faint">unknown</span>}</td>
               <td className="px-4 py-3 text-ink-soft">{k.keyword_difficulty ?? <span className="text-ink-faint">unknown</span>}</td>
-              <td className="px-4 py-3 text-xs text-ink-faint">{k.data_source ?? "—"}</td>
+              <td className="px-4 py-3 text-xs text-ink-faint">{k.data_source ?? (k.notes?.startsWith("AI suggestion") ? "AI suggestion" : "—")}</td>
               <td className="px-4 py-3">
                 <StatusBadge status={k.status} />
               </td>

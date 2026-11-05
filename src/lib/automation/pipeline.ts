@@ -19,6 +19,8 @@ import { recipeInputSchema } from "@/lib/recipes/schema";
 import { dbError } from "@/lib/services/errors";
 import { claimJob, failJob, getOrCreateDailyJob, MAX_JOB_RETRIES, recordJobStep, toJobDate, JOB_LEASE_MINUTES, type PublishingJob } from "@/lib/services/jobs";
 import { BudgetExceededError } from "./cost";
+import { describeKeywordQueue, loadKeywordQueueStats, type KeywordQueueStats } from "./keyword-queue";
+import { replenishKeywords, type ReplenishOutcome } from "./replenish";
 import { checkBudget, logEvent, markAttempt, recordAttempt, type AttemptKind } from "./log";
 import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type SiteRefresher } from "./types";
 import { blocking, parseGeneratedRecipe, validateGeneratedRecipe } from "./validate";
@@ -222,6 +224,29 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
     }
   };
 
+  // Asks for new keyword ideas when the queue is low. Never throws: a failure
+  // is logged and the claim below decides whether the run can go on.
+  const topUpKeywords = async (): Promise<ReplenishOutcome> => {
+    const outcome = await replenishKeywords({
+      db,
+      jobId,
+      now,
+      settings,
+      keywordWriter: providers.keywordWriter,
+      callAi: async (ai, input, attempt) => (await callAi("keywords", ai, input, attempt)).result,
+    }).catch((err: unknown): ReplenishOutcome => ({ status: "failed", before: EMPTY_QUEUE, error: err instanceof Error ? err.message : String(err) }));
+    if (outcome.status === "not_needed") return outcome;
+    const queue = describeKeywordQueue(outcome.before);
+    if (outcome.status === "succeeded") {
+      await logEvent(db, jobId, "replenish_keywords", "succeeded", `Keyword queue was low (${queue}) Added ${outcome.inserted} new keyword idea(s); ${outcome.rejected} idea(s) were screened out. ${outcome.after.usable} usable now.`, { ...outcome });
+    } else if (outcome.status === "skipped") {
+      await logEvent(db, jobId, "replenish_keywords", "skipped", `Keyword queue is low (${queue}) ${outcome.reason}`);
+    } else {
+      await logEvent(db, jobId, "replenish_keywords", "failed", `Keyword queue is low (${queue}) Automatic top-up failed: ${outcome.error}`);
+    }
+    return outcome;
+  };
+
   // Runs every check on a person's corrected draft, including one AI review.
   // Never calls the writer or the repairer: a draft that still fails stops the
   // run, and is not reviewed again until a person replaces it.
@@ -257,13 +282,21 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
         if (violation) throw new PipelineError(`The keyword "${preview.keyword}" asks for a dish with ${violation.term}, which recipes must not contain. Try another keyword.`);
         return preview;
       }
+      // Tops up the queue first when fewer than REPLENISH_BELOW keywords are usable.
+      const refill = await topUpKeywords();
       // Keywords for pork or alcohol dishes are rejected without spending
       // anything on AI, and the next keyword in the queue is tried.
       for (let tries = 0; tries < MAX_KEYWORD_SKIPS; tries++) {
         const { data, error } = await db.rpc("claim_next_keyword", { p_job_id: jobId });
         if (error) throw dbError("Claim keyword", error);
         const claimed = data as KeywordRow | null;
-        if (!claimed?.id) throw new PipelineError("No usable keywords left. Import more keywords in /admin/keywords.");
+        if (!claimed?.id) {
+          // claim_next_keyword gives up after rejecting 50 near-duplicates in one
+          // call, so "nothing claimed" does not always mean the queue is empty.
+          const left = await loadKeywordQueueStats(db, settings.max_keyword_difficulty);
+          if (left.usable > 0) continue;
+          throw new PipelineError(noKeywordsMessage(left, refill));
+        }
         if (keywordViolation(claimed.keyword)) {
           await rejectKeyword(db, jobId, claimed);
           continue;
@@ -271,7 +304,9 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
         await saveCheckpoint({ keyword_id: claimed.id });
         return claimed;
       }
-      throw new PipelineError(`The next ${MAX_KEYWORD_SKIPS} keywords were all for pork or alcohol dishes and were rejected. Import more keywords in /admin/keywords.`);
+      throw new PipelineError(
+        `No keyword could be claimed after ${MAX_KEYWORD_SKIPS} tries: the keywords tried were for pork or alcohol dishes, or too similar to existing recipes, and were rejected. No recipe was generated. Import more keywords in /admin/keywords.`,
+      );
     });
     keywordId = keyword.id || null;
 
@@ -507,6 +542,21 @@ async function evaluate(
 }
 
 /** Takes a pork or alcohol keyword out of the queue for good, with the reason. */
+const EMPTY_QUEUE: KeywordQueueStats = { usable: 0, tooHard: 0, outOfAttempts: 0, queued: 0, assigned: 0, used: 0, rejected: 0, total: 0 };
+
+/** Why the run stopped without a keyword, and what the automatic top-up did. */
+export function noKeywordsMessage(queue: KeywordQueueStats, refill: ReplenishOutcome): string {
+  const topUp =
+    refill.status === "failed"
+      ? ` Automatic keyword top-up failed: ${refill.error}`
+      : refill.status === "skipped"
+        ? ` Automatic keyword top-up did not run: ${refill.reason}`
+        : refill.status === "succeeded"
+          ? ` The automatic top-up added ${refill.inserted} keyword(s), but none could be claimed.`
+          : "";
+  return `No usable keywords left (${describeKeywordQueue(queue)})${topUp} No recipe was generated. Import more keywords in /admin/keywords, or the next run will try the top-up again.`;
+}
+
 async function rejectKeyword(db: SupabaseClient, jobId: string, keyword: KeywordRow) {
   const violation = keywordViolation(keyword.keyword)!;
   const reason = `Rejected by the pork-free and alcohol-free rule: the keyword asks for a dish with ${violation.term} ("${violation.match}").`;

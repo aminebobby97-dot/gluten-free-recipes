@@ -1,5 +1,5 @@
 // Minimal in-memory stand-in for the parts of the Supabase query builder used
-// by the publishing services. Supports eq/neq/lt/lte/in/is filters, insert, update, upsert
+// by the publishing services. Supports eq/neq/lt/lte/gt/gte/in/is filters, range, insert, update, upsert
 // (with ignoreDuplicates), single/maybeSingle and head-only counts.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -19,6 +19,8 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
     const filters: Array<(r: Row) => boolean> = [];
     let countOnly = false;
+    let rangeFrom = 0;
+    let rangeTo = Infinity;
 
     const run = () => {
       const rows = data[table];
@@ -27,7 +29,9 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
         const out: Row[] = [];
         for (const item of list) {
           const key = upsertOpts.onConflict;
-          if (op === "upsert" && key && rows.some((r) => r[key] === item[key])) {
+          // keywords.normalized_keyword is a generated column: compare it from the keyword text.
+          const value = (r: Row) => (key === "normalized_keyword" ? String(r.keyword ?? "").trim().replace(/\s+/g, " ").toLowerCase() : r[key!]);
+          if (op === "upsert" && key && rows.some((r) => value(r) === value(item))) {
             if (upsertOpts.ignoreDuplicates) continue;
           }
           const row = { id: `id-${rows.length + 1}`, retry_count: 0, status: "pending", ...item };
@@ -50,8 +54,10 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
       delete: () => ((op = "delete"), calls.push({ table, op }), builder),
       eq: (col: string, val: unknown) => (filters.push((r) => r[col] === val), builder),
       neq: (col: string, val: unknown) => (filters.push((r) => r[col] !== val), builder),
-      lt: (col: string, val: unknown) => (filters.push((r) => (r[col] as string | number) < (val as string | number)), builder),
-      lte: (col: string, val: unknown) => (filters.push((r) => (r[col] as string | number) <= (val as string | number)), builder),
+      lt: (col: string, val: unknown) => (filters.push((r) => r[col] != null && (r[col] as string | number) < (val as string | number)), builder),
+      lte: (col: string, val: unknown) => (filters.push((r) => r[col] != null && (r[col] as string | number) <= (val as string | number)), builder),
+      gt: (col: string, val: unknown) => (filters.push((r) => r[col] != null && (r[col] as string | number) > (val as string | number)), builder),
+      gte: (col: string, val: unknown) => (filters.push((r) => r[col] != null && (r[col] as string | number) >= (val as string | number)), builder),
       in: (col: string, vals: unknown[]) => (filters.push((r) => vals.includes(r[col])), builder),
       is: (col: string, val: unknown) => (filters.push((r) => (r[col] ?? null) === val), builder),
       not: (col: string, operator: string, val: unknown) => {
@@ -61,6 +67,7 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
       },
       order: () => builder,
       limit: () => builder,
+      range: (from: number, to: number) => ((rangeFrom = from), (rangeTo = to), builder),
       single: async () => {
         const rows = run();
         return rows.length === 1 ? { data: rows[0], error: null } : { data: null, error: { message: `expected 1 row, got ${rows.length}` } };
@@ -68,7 +75,7 @@ export function createFakeDb(tables: Record<string, Row[]> = {}, rpcs: Record<st
       maybeSingle: async () => ({ data: run()[0] ?? null, error: null }),
       then: (resolve: (v: { data: Row[] | null; error: null; count?: number }) => unknown) => {
         const rows = run();
-        return resolve(countOnly ? { data: null, error: null, count: rows.length } : { data: rows, error: null });
+        return resolve(countOnly ? { data: null, error: null, count: rows.length } : { data: op === "select" ? rows.slice(rangeFrom, rangeTo + 1) : rows, error: null });
       },
     };
     return builder;

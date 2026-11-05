@@ -126,7 +126,11 @@ export function automationDb(opts: { settings?: Record<string, unknown>; keyword
       ],
       categories: [CATEGORY],
       recipes: opts.recipes ?? [],
-      keywords: opts.keywords ?? [{ id: "kw-1", keyword: "gluten free blueberry muffins", status: "new", category_id: null, search_volume: null, keyword_difficulty: null }],
+      keywords: (opts.keywords ?? [{ id: "kw-1", keyword: "gluten free blueberry muffins", status: "new", category_id: null, search_volume: null, keyword_difficulty: null }]).map((k) => ({
+        attempt_count: 0,
+        assigned_recipe_id: null,
+        ...k,
+      })),
       publishing_jobs: [],
       publishing_job_events: [],
       generation_attempts: [],

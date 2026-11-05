@@ -2,18 +2,19 @@ import Link from "next/link";
 import { PageHeader, Panel, StatusBadge, formatDateTime } from "@/components/admin/ui";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getDashboardStats, listRecipes } from "@/lib/data/admin";
-import { getAutomationOverview } from "@/lib/data/automation";
+import { replenishmentSummary } from "@/components/admin/keyword-queue";
+import { getAutomationOverview, getKeywordQueueOverview } from "@/lib/data/automation";
 
 export const metadata = { title: "Overview" };
 
 export default async function AdminOverviewPage() {
   const { supabase } = await requireAdmin();
-  const [stats, recent, automation] = await Promise.all([getDashboardStats(supabase), listRecipes(supabase), getAutomationOverview(supabase)]);
+  const [stats, recent, automation, queue] = await Promise.all([getDashboardStats(supabase), listRecipes(supabase), getAutomationOverview(supabase), getKeywordQueueOverview(supabase, 1)]);
   const cards = [
     { label: "Published recipes", value: stats.published, href: "/admin/recipes?status=published" },
     { label: "Drafts", value: stats.draft, href: "/admin/recipes?status=draft" },
     { label: "Waiting for review", value: stats.inReview, href: "/admin/recipes?status=in_review" },
-    { label: "Unused keywords", value: stats.keywordsNew, href: "/admin/keywords?status=new" },
+    { label: "Usable keywords", value: queue.stats.usable, href: "/admin/keywords" },
     { label: "Errors", value: stats.jobsFailed + stats.pinsFailed, href: "/admin/errors" },
   ];
   return (
@@ -80,6 +81,16 @@ export default async function AdminOverviewPage() {
             <div className="flex justify-between">
               <dt className="text-ink-soft">Keywords imported</dt>
               <dd className="font-semibold text-ink">{stats.keywordsTotal}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-ink-soft">
+                <Link href="/admin/keywords" className="hover:text-sage-dark">
+                  Keyword top-up
+                </Link>
+              </dt>
+              <dd className={`text-right font-semibold ${queue.replenishments?.[0]?.status === "failed" ? "text-danger" : "text-ink"}`}>
+                {queue.replenishments == null ? "Not set up" : replenishmentSummary(queue.replenishments[0])}
+              </dd>
             </div>
           </dl>
         </Panel>

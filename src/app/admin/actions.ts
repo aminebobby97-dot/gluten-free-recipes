@@ -225,7 +225,10 @@ export async function updateKeywordStatusAction(_prev: ActionState, form: FormDa
   const { supabase } = await requireAdmin();
   const status = text(form, "status");
   if (!["new", "rejected"].includes(status)) return { ok: false, message: "Invalid status." };
-  const { error } = await supabase.from("keywords").update({ status }).eq("id", text(form, "id"));
+  // Restoring gives the keyword a fresh start: the daily run skips keywords
+  // with 3 failed attempts, so a restored one would otherwise never be picked.
+  const patch = status === "new" ? { status, attempt_count: 0, last_error: null } : { status };
+  const { error } = await supabase.from("keywords").update(patch).eq("id", text(form, "id"));
   if (error) return failure(dbError("Update keyword", error));
   revalidatePath("/admin/keywords");
   return { ok: true, message: "Keyword updated." };

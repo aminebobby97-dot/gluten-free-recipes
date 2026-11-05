@@ -95,12 +95,27 @@ export interface PhotoVerdict {
   problems: string[];
 }
 
+/** What the keyword-idea step is asked for when the keyword queue runs low. */
+export interface KeywordIdeaRequest {
+  /** How many ideas to suggest in each category. */
+  categories: Array<{ slug: string; name: string; count: number }>;
+  /** What existing keywords and recipes are about, so the ideas avoid them. */
+  avoid: string[];
+}
+
+export interface KeywordIdea {
+  keyword: string;
+  category_slug: string;
+}
+
 export interface AiProviders {
   writer: AiStep<WriterInput, unknown>;
   repairer: AiStep<RepairInput, unknown>;
   reviewer: AiStep<GeneratedRecipe, ReviewVerdict>;
   photographer: AiStep<PhotoRequest, Photo>;
   photoChecker: AiStep<{ recipe: GeneratedRecipe; photo: Photo }, PhotoVerdict>;
+  /** Suggests new keywords when the queue runs low. Without it the queue is never topped up automatically. */
+  keywordWriter?: AiStep<KeywordIdeaRequest, KeywordIdea[]>;
 }
 
 export interface ImageStore {
