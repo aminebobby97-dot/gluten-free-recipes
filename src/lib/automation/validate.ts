@@ -3,6 +3,7 @@
 // Phase 2 checks (consistency, allergens, SEO, keyword targeting). Duplicate
 // checks need the database and run in the pipeline.
 
+import { analyzeCookwareClaims } from "@/lib/recipes/cookware";
 import { analyzeDietaryRestrictions } from "@/lib/recipes/dietary";
 import { getPublishReadiness } from "@/lib/recipes/validation";
 import { compareAllergens, undeclaredOptionalAllergens } from "./allergens";
@@ -50,6 +51,11 @@ export function validateGeneratedRecipe(recipe: GeneratedRecipe, keyword: Keywor
   // Pork-free and alcohol-free, in every field including substitutions, tips,
   // FAQ and the photo brief. Always blocking.
   for (const v of analyzeDietaryRestrictions(recipe)) add("dietary", "blocking", v.field, v.message);
+
+  // A claim that heat, preheating or wiping removes gluten is false. The
+  // pipeline removes such claims in code first (repairGlutenRemovalClaims);
+  // one it could not remove cleanly blocks, so the repair step rewrites it.
+  for (const c of analyzeCookwareClaims(recipe)) add("cookware", "blocking", c.field, `${c.message} Found: "${c.phrase}"`);
 
   for (const c of checkConsistency(recipe)) add("consistency", c.severity, c.field, c.message);
   for (const a of compareAllergens(recipe.allergens, recipe.ingredients)) add("allergens", a.severity, "allergens", a.message);
