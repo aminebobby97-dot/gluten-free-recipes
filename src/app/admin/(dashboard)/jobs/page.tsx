@@ -13,7 +13,7 @@ export default async function AdminJobsPage() {
     <div className="space-y-6">
       <PageHeader title="Publishing jobs" description="One row per automated run. Each date has at most one daily job; test runs are listed as dry runs. Open a date to see every step, AI call and cost." />
       <Notice>
-        Daily runs are not scheduled yet. Jobs appear here when a run is started by hand from GitHub Actions. Settings are under{" "}
+        Daily recipe publishing is scheduled for 02:00 UTC (09:00 Bangkok time). Actual start times may vary due to GitHub Actions scheduling delays. You can also trigger a run manually from GitHub Actions. Settings are under{" "}
         <Link href="/admin/automation" className="font-semibold underline">
           Automation
         </Link>
