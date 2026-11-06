@@ -22,8 +22,10 @@ import { BudgetExceededError } from "./cost";
 import { describeKeywordQueue, loadKeywordQueueStats, type KeywordQueueStats } from "./keyword-queue";
 import { replenishKeywords, type ReplenishOutcome } from "./replenish";
 import { checkBudget, logEvent, markAttempt, recordAttempt, type AttemptKind } from "./log";
-import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type SiteRefresher } from "./types";
+import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type ReviewVerdict, type SiteRefresher } from "./types";
 import { blocking, parseGeneratedRecipe, validateGeneratedRecipe } from "./validate";
+import { applyWordingFixes } from "./wording";
+import { repairGlutenRemovalClaims } from "@/lib/recipes/cookware";
 
 export type RunMode = "dry_run" | "review" | "auto";
 
@@ -508,19 +510,36 @@ async function finishJob(db: SupabaseClient, jobId: string, step: string) {
   if (error) throw dbError("Finish publishing job", error);
 }
 
-/** Parses, validates, checks for duplicates and, if nothing blocks yet, asks the AI reviewer. */
+/**
+ * Parses, validates, checks for duplicates and, if nothing blocks yet, asks the AI reviewer.
+ *
+ * Two kinds of small problems are fixed in code, without another AI call, so
+ * they never fail a recipe on their own:
+ * - a false claim that heat, preheating or wiping removes gluten is removed
+ *   (repairGlutenRemovalClaims), before any check runs;
+ * - the reviewer's blocking "wording" issues that quote the exact text to
+ *   change are applied (applyWordingFixes), and every code check runs again.
+ * The returned recipe is the fixed one. What was fixed is kept as warnings.
+ */
 async function evaluate(
   db: SupabaseClient,
   raw: unknown,
   keyword: KeywordRow,
   categories: CategoryOption[],
   settings: AutomationSettings,
-  review: (recipe: GeneratedRecipe) => Promise<{ result: AiResult<{ issues: Array<Pick<Issue, "severity" | "field" | "message">> }> }>,
+  review: (recipe: GeneratedRecipe) => Promise<{ result: AiResult<ReviewVerdict> }>,
 ): Promise<{ recipe: GeneratedRecipe | null; issues: Issue[] }> {
   const parsed = parseGeneratedRecipe(raw);
   if (!parsed.recipe) return parsed;
-  const recipe = parsed.recipe;
-  const issues = validateGeneratedRecipe(recipe, keyword, categories);
+  const cleaned = repairGlutenRemovalClaims(parsed.recipe);
+  let recipe = cleaned.recipe;
+  const autoFixed: Issue[] = cleaned.repairs.map((r) => ({
+    severity: "warning",
+    source: "cookware",
+    field: r.field,
+    message: `Fixed automatically: removed "${r.removed}" (heat, preheating or wiping does not remove gluten).`,
+  }));
+  let issues = validateGeneratedRecipe(recipe, keyword, categories);
 
   const { data: slugTaken } = await db.from("recipes").select("id").eq("slug", recipe.slug).maybeSingle();
   if (slugTaken) issues.push({ severity: "blocking", source: "duplicate", field: "slug", message: `The slug "${recipe.slug}" is already used.` });
@@ -536,9 +555,19 @@ async function evaluate(
 
   if (blocking(issues).length === 0) {
     const { result } = await review(recipe);
-    for (const i of result.output.issues) issues.push({ ...i, source: "review" });
+    const wording = applyWordingFixes(recipe, result.output.issues);
+    if (wording.applied.length > 0) {
+      // Prose changed: run every code check again on the fixed recipe. Title,
+      // slug and focus keyword cannot change, so the duplicate checks still hold.
+      recipe = repairGlutenRemovalClaims(wording.recipe).recipe;
+      issues = issues.filter((i) => i.source === "duplicate").concat(validateGeneratedRecipe(recipe, keyword, categories));
+      for (const i of wording.applied) {
+        issues.push({ severity: "warning", source: "review", field: i.field, message: `Fixed automatically: ${i.message}` });
+      }
+    }
+    for (const i of wording.rest) issues.push({ severity: i.severity, field: i.field, message: i.message, source: "review" });
   }
-  return { recipe, issues };
+  return { recipe, issues: [...autoFixed, ...issues] };
 }
 
 /** Takes a pork or alcohol keyword out of the queue for good, with the reason. */

@@ -9,12 +9,23 @@ A GitHub Actions workflow runs a small program (the "worker"). The worker:
 1. Picks the best unused keyword from your Keywords list, skipping hard ones and ones too similar to an existing recipe. If fewer than 30 keywords are usable, it first adds new keyword ideas (see [Keyword queue and automatic top-up](#keyword-queue-and-automatic-top-up)).
 2. Asks Claude (Anthropic) to write the recipe as structured data.
 3. Checks it in code: gluten ingredients and cross-contact notes, allergens, ingredients used in the steps, times, oven and food-safety temperatures, SEO fields, duplicates.
-4. Asks a second, independent Claude review to look for errors. A failing draft gets one repair attempt, then the run stops.
+4. Asks a second, independent Claude review to look for errors. A failing draft gets one repair attempt, then the run stops. Small wording problems are fixed in code instead (see [Cookware wording](#cookware-wording)).
 5. Asks OpenAI for one photo (landscape 3:2 for the site), and Claude checks that it matches the recipe. The Pinterest Pin is made later from this same photo, so no second AI image is paid for.
 6. Saves the recipe as **In review** for you to approve, or, in Automatic mode, publishes it.
 7. In Automatic mode with automatic Pins on: draws its Pinterest Pin, checks the recipe page is live, and posts the Pin to your board (see [Full automation](#full-automation-recipes-and-pins)).
 
 Every step, AI call and cost is logged in the admin dashboard under **Publishing jobs**.
+
+### Cookware wording
+
+Recipes assume you cook with clean cookware suitable for gluten-free cooking. Steps say simply "Heat a clean skillet over medium heat", cast iron is treated like any other clean pan, and recipes don't carry a cookware warning by default. A cross-contact tip appears only when it really matters: shared fryers or frying oil, shared toasters, equipment dusted with wheat flour, and hard-to-clean items (wooden boards, scratched nonstick, colanders used for regular pasta, cast iron or baking stones also used for wheat foods).
+
+Heat, preheating, searing, seasoning and wiping do **not** remove gluten, so a recipe must never say they do. Two fixes keep this from failing a whole recipe:
+
+1. **A code check** (`src/lib/recipes/cookware.ts`) finds any sentence claiming heat or wiping removes gluten and removes that claim before the other checks run, keeping the useful part ("Preheat the pan to burn off any gluten" becomes "Preheat the pan"). It costs nothing. If it can't remove the claim cleanly, the claim blocks and goes to the usual repair round.
+2. **The reviewer** marks small prose problems as *wording* issues and quotes the exact text with a corrected version. The run applies those in code and then runs every code check again, so no extra AI call is made and the repair and retry limits stay the same. Ingredient, quantity, temperature, allergen, gluten, pork and alcohol problems are never fixed this way: they still block and go through the normal repair round.
+
+Each fix is kept as a warning on the job's attempt, so you can see what changed.
 
 ### Safety switches
 
@@ -158,7 +169,7 @@ A draft that fails its checks is never saved, but its text stays in the job's AI
 
 1. Claude writes you a SQL statement for the failed job. It copies the rejected draft, changes only the wording that failed, and saves it on the job as a **corrected draft**. You run it in the Supabase SQL Editor. It refuses if the job isn't failed, has no tries left, or already has a recipe.
 2. Run the workflow with mode `review`. If the job is from an earlier day, also paste its id in **resume_job_id**.
-3. The corrected draft goes through **every** check again: the code checks, the duplicate checks, and the independent Claude review (one call, a few cents). Claude never rewrites or repairs it.
+3. The corrected draft goes through **every** check again: the code checks, the duplicate checks, and the independent Claude review (one call, a few cents). Claude never rewrites or repairs it. Only the small code fixes from [Cookware wording](#cookware-wording) can apply, and they are listed as warnings.
    - If it passes, the run makes the photo and saves the recipe as **In review**. A corrected draft is never published automatically, even in auto mode.
    - If it fails, the run stops before any further AI call. Running it again costs nothing until a new correction replaces it.
 

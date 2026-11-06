@@ -95,7 +95,16 @@ function replyText(reply: ClaudeReply): string {
 }
 
 const reviewSchema = z.object({
-  issues: z.array(z.object({ severity: z.enum(["blocking", "warning"]), field: z.string(), message: z.string() })),
+  issues: z.array(
+    z.object({
+      severity: z.enum(["blocking", "warning"]),
+      field: z.string(),
+      message: z.string(),
+      kind: z.enum(["safety", "accuracy", "wording"]).optional(),
+      quote: z.string().optional(),
+      replacement: z.string().optional(),
+    }),
+  ),
 });
 const photoVerdictSchema = z.object({ ok: z.boolean(), problems: z.array(z.string()) });
 
@@ -238,6 +247,7 @@ function repairPrompt(input: RepairInput): string {
     "",
     "A draft was written for this keyword but failed checks. Return the complete corrected recipe, fixing every blocking issue and as many warnings as make sense. Change only what the issues require.",
     "If an issue is about pork or alcohol, replace that ingredient with a compliant one and update the whole recipe to match: the ingredient list, every step that uses it, quantities, times, the introduction, substitutions, tips, FAQ, allergens and the photo brief. Never just delete it from one place.",
+    "If an issue is about cookware, keep the step simple (\"Heat a clean skillet over medium heat.\") and never say that heat, preheating or wiping removes gluten. Do not add new cookware warnings.",
     "",
     "Issues:",
     ...input.issues.map((i) => `- [${i.severity}] ${i.field}: ${i.message}`),

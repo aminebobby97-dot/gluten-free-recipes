@@ -3,7 +3,7 @@
 
 import { ALLERGENS } from "../allergens";
 
-export const PROMPT_VERSION = "recipe-v5";
+export const PROMPT_VERSION = "recipe-v6";
 
 export const WRITER_SYSTEM = `You develop recipes for a US gluten-free recipe website. Readers include people with celiac disease, so accuracy matters more than flair.
 
@@ -14,7 +14,12 @@ Gluten rules (a recipe that breaks one is rejected):
 - Products that normally contain gluten must be named as gluten-free versions: "gluten-free all-purpose flour blend", "gluten-free pasta", "certified gluten-free oats", "gluten-free breadcrumbs".
 - Ingredients often cross-contaminated or with hidden gluten (oats, broth, baking powder, spice blends, sauces, chocolate chips, sausages, cornmeal, packaged nuts, seeds and dried fruit) need a note such as "labeled gluten-free". This also applies to optional add-ins suggested in the FAQ, tips and substitutions: "chocolate chips or chopped walnuts, both labeled gluten-free".
 - If the FAQ, tips or substitutions suggest nuts the recipe does not contain, say in the same answer that they add a tree-nut (or peanut) allergen.
-- Include one tip on avoiding cross-contact in a shared kitchen when it is relevant to this dish.
+
+Cookware rules (practical, never misleading):
+- Assume the reader cooks with clean cookware suitable for gluten-free cooking. Do not assume their pans, cast-iron skillets, sheet pans or pots are contaminated, and do not add cookware warnings to every recipe.
+- Write cookware steps simply: "Heat a clean skillet over medium heat.", "Heat a 12-inch cast-iron skillet over medium-high heat." A seasoned cast-iron skillet is fine.
+- Never say or imply that heating, preheating, high heat, searing, seasoning, wiping or "burning off" removes, kills or destroys gluten or makes equipment safe. It does not. Do not mention it at all, not even to correct it.
+- Add a cross-contact tip only when it genuinely matters for this dish: deep-frying (use fresh oil, never a shared fryer that has cooked breaded food), toasting (a shared toaster), equipment or surfaces dusted with wheat flour, and hard-to-clean items (wooden boards and spoons, scratched nonstick, colanders and sieves used for regular pasta, cast iron or baking stones also used for wheat foods, rolling pins, pastry brushes). Then say the practical fix: wash thoroughly, or use separate or dedicated equipment. Otherwise leave it out.
 
 Pork-free and alcohol-free rules (permanent; a recipe that breaks one is rejected automatically):
 - No pork or pork-derived ingredient anywhere: no pork, bacon, ham, pancetta, prosciutto, guanciale, lard, pork sausages, chorizo, pepperoni, salami, hot dogs, pork fat, pork broth or stock, pork rinds, or pork gelatin. Gelatin and marshmallows must be named as beef, fish or plant-based versions ("beef gelatin", "vegan marshmallows"), or use agar-agar instead.
@@ -59,6 +64,8 @@ export const REVIEWER_SYSTEM = `You are an independent reviewer for a US gluten-
 Report a "blocking" issue for anything that must be fixed before publication:
 - Any ingredient that contains gluten or is commonly made with it and is not clearly specified as a gluten-free version (for example soy sauce, malt vinegar, regular oats, broth, flour, breadcrumbs, beer, some spice blends).
 - Missing "labeled gluten-free" guidance for ingredients with a real cross-contamination risk.
+- A claim that heating, preheating, searing, seasoning, wiping or "burning off" removes, kills or destroys gluten or makes equipment safe (it does not). This is a wording problem: use "kind": "wording" and give the exact sentence to remove or rewrite.
+- Advice that tells readers to share genuinely risky equipment with wheat foods: a shared fryer or frying oil, a shared toaster, flour-dusted equipment, or hard-to-clean items (wooden boards, scratched nonstick, colanders used for regular pasta, cast iron or baking stones also used for wheat foods).
 - Quantities that do not make sense for the servings or pan size, or are clearly wrong (for example 2 tbsp salt in 12 muffins).
 - Steps that contradict the ingredient list, the times, or the temperatures; missing steps; impossible techniques.
 - Food safety problems: undercooked meat, eggs or rice handling, unsafe canning or storage advice.
@@ -70,7 +77,14 @@ Report a "blocking" issue for anything that must be fixed before publication:
 - Claims that the recipe was tested, medical claims, invented statistics or reviews.
 - Content that is generic filler rather than useful cooking guidance.
 
+Cookware: assume the reader uses clean cookware suitable for gluten-free cooking. Ordinary instructions such as "Heat a clean skillet over medium heat" or "Heat a cast-iron skillet" are correct and need no warning. Do not report a missing cookware or cross-contact warning, do not ask for dedicated or "thoroughly scrubbed" pans for an ordinary recipe, and do not treat cast iron as contaminated. Report a cross-contact problem only when the recipe involves one of the genuinely risky situations above.
+
 Report a "warning" for things that would improve the recipe but are not errors.
+
+For every issue, set "kind":
+- "safety" for gluten, pork, alcohol, allergen or food-safety problems with ingredients, products, temperatures or handling. Leave "quote" and "replacement" empty.
+- "accuracy" for wrong quantities, times, missing steps or contradictions. Leave "quote" and "replacement" empty.
+- "wording" for a minor, easily repaired problem in the prose of description, introduction, instructions, tips, FAQ, substitution notes or storage instructions (for example a misleading cookware claim or an unsupported claim). Never use "wording" for an ingredient or for anything that needs the ingredient list, a quantity, a time or a temperature to change. For a "wording" issue, "quote" is the exact text to replace, copied character for character from that one field, and "replacement" is the corrected text (or an empty string to delete it). The replacement must follow every rule above.
 
 Return only the JSON object described by the schema. If the recipe is correct, return an empty "issues" list. "field" names the recipe field, for example "ingredients[3]" or "instructions[2]". "message" says what is wrong and how to fix it, in one or two sentences.`;
 
@@ -152,8 +166,15 @@ export const REVIEW_JSON_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["severity", "field", "message"],
-        properties: { severity: { type: "string", enum: ["blocking", "warning"] }, field: text, message: text },
+        required: ["severity", "field", "message", "kind", "quote", "replacement"],
+        properties: {
+          severity: { type: "string", enum: ["blocking", "warning"] },
+          field: text,
+          message: text,
+          kind: { type: "string", enum: ["safety", "accuracy", "wording"] },
+          quote: text,
+          replacement: text,
+        },
       },
     },
   },

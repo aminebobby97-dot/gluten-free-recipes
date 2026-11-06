@@ -38,7 +38,7 @@ export interface Issue {
   severity: "blocking" | "warning";
   field: string;
   message: string;
-  source: "schema" | "readiness" | "consistency" | "allergens" | "seo" | "duplicate" | "review" | "photo" | "dietary";
+  source: "schema" | "readiness" | "consistency" | "allergens" | "seo" | "duplicate" | "review" | "photo" | "dietary" | "cookware";
 }
 
 /** One AI request's result, with what it cost. */
@@ -71,8 +71,24 @@ export interface RepairInput extends WriterInput {
   issues: Issue[];
 }
 
+/**
+ * One finding from the AI reviewer. "kind" is "wording" for a minor,
+ * easily repaired wording problem in prose (not an ingredient, quantity,
+ * temperature or allergen problem); for those the reviewer also gives the
+ * exact text to replace ("quote") and its replacement, so the pipeline can
+ * fix it in code instead of failing the recipe.
+ */
+export interface ReviewIssue {
+  severity: "blocking" | "warning";
+  field: string;
+  message: string;
+  kind?: "safety" | "accuracy" | "wording";
+  quote?: string;
+  replacement?: string;
+}
+
 export interface ReviewVerdict {
-  issues: Array<Pick<Issue, "severity" | "field" | "message">>;
+  issues: ReviewIssue[];
 }
 
 export interface Photo {
