@@ -11,9 +11,13 @@
 //   vanilla (for example "vanilla powder"), other sections are pointed at that
 //   ingredient instead, so every section names the same product.
 // - A non-alcoholic product without the "check the label" note gets the note
-//   ("labeled alcohol-free").
+//   ("choose one labeled alcohol-free").
 // - Soy sauce, tamari, coconut aminos and similar condiments without the
-//   label note get "labeled gluten-free and alcohol-free".
+//   label note get "choose one labeled gluten-free and alcohol-free".
+//
+// The label note is always written as an instruction to the reader ("choose
+// one labeled ..."), never as a description, so a correction never implies
+// that an ordinary, unverified product is gluten-free or alcohol-free.
 //
 // Everything else is left for the AI repair step: pork, wine, beer, spirits,
 // "regular soy sauce", and any mention inside a sentence that talks about
@@ -78,7 +82,7 @@ const UNITS = /^(?:(?:\d+(?:[./]\d+)?|[\u00bc-\u00be\u2150-\u215e])\s*)+(?:(?:ts
 export function sameIngredient(a: string, b: string): boolean {
   const plain = (s: string) =>
     s
-      .replace(/\s*\(labell?ed [^)]*\)/gi, "")
+      .replace(/\s*\((?:choose one )?labell?ed [^)]*\)/gi, "")
       .trim()
       .replace(UNITS, "")
       .toLowerCase()
@@ -123,8 +127,9 @@ export function swapExtracts(text: string, nameFor: (flavor: string) => string =
   return { text: out, swaps, skipped };
 }
 
-const LABEL_ALCOHOL = "labeled alcohol-free";
-const LABEL_CONDIMENT = "labeled gluten-free and alcohol-free";
+/** Written as an instruction to buy a labeled product, never as a claim about an unverified one. */
+export const LABEL_ALCOHOL = "choose one labeled alcohol-free";
+export const LABEL_CONDIMENT = "choose one labeled gluten-free and alcohol-free";
 
 /** Adds a label phrase to an ingredient note, keeping what the note already says. */
 function withNote(note: string | undefined, label: string): string {
@@ -306,7 +311,7 @@ export function repairMinorDietaryIssues<T extends DietaryRepairText>(recipe: T)
 // updates the whole recipe around it.
 
 const HINTS: Array<[RegExp, string]> = [
-  [/alcohol-based extract/, 'Use "alcohol-free vanilla flavoring" (note: "labeled alcohol-free") in the same amount, or pure vanilla powder or a vanilla bean. Name it the same way in every section.'],
+  [/alcohol-based extract/, 'Use "alcohol-free vanilla flavoring" (note: "choose one labeled alcohol-free") in the same amount, or pure vanilla powder or a vanilla bean. Name it the same way in every section.'],
   [/^(?:wine|sherry|champagne|rice wine|sake)$/, "Use broth labeled gluten-free that suits the dish (chicken or vegetable), or water, plus 1 teaspoon lemon juice or vinegar per 1/2 cup for acidity. Rewrite the deglazing or simmering step to match."],
   [/^(?:beer|hard cider)$/, "Use broth labeled gluten-free, sparkling water, or apple juice, depending on the dish. Rewrite the steps to match."],
   [/^(?:rum|vodka|brandy|whiskey|bourbon|scotch|spirits|liqueur|bitters|alcohol|flambé)$/, "Leave it out, or use fruit juice, citrus zest or an alcohol-free flavoring labeled alcohol-free. Remove any flambé or cook-off step."],
@@ -322,7 +327,7 @@ const HINTS: Array<[RegExp, string]> = [
 /** A suggested compliant replacement for a dietary problem, for the repair prompt. */
 export function repairHint(category: "pork" | "alcohol" | "condiment", term: string): string {
   if (category === "condiment") {
-    return 'Name it "tamari, labeled gluten-free and alcohol-free" or "coconut aminos, labeled gluten-free and alcohol-free" (or the same condiment with that label) in the ingredient list and in every suggestion. Never write "regular soy sauce".';
+    return 'Use tamari or coconut aminos and tell the reader to choose one labeled both gluten-free and alcohol-free, for example "tamari (choose one labeled gluten-free and alcohol-free)", in the ingredient list and in every suggestion. Never write "regular soy sauce" and never imply an unlabeled sauce is safe.';
   }
   for (const [pattern, hint] of HINTS) if (pattern.test(term)) return hint;
   return category === "pork" ? "Replace it with a pork-free ingredient named as such." : "Replace it with an alcohol-free ingredient, or leave it out.";

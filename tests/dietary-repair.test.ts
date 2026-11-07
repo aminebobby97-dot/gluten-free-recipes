@@ -91,10 +91,10 @@ describe("the November 7 recipe", () => {
 
   it("is corrected in code consistently across every section", () => {
     const { recipe, fixes } = repairMinorDietaryIssues(oatmeal());
-    expect(recipe.ingredients[7]).toMatchObject({ amount: "1", unit: "tsp", name: "alcohol-free vanilla flavoring", note: "labeled alcohol-free" });
+    expect(recipe.ingredients[7]).toMatchObject({ amount: "1", unit: "tsp", name: "alcohol-free vanilla flavoring", note: "choose one labeled alcohol-free" });
     expect(recipe.instructions[2].text).toBe("Whisk the milk, eggs, maple syrup and alcohol-free vanilla flavoring, pour over the oats and rest for 10 minutes.");
     // The substitution names the recipe's own (corrected) ingredient, with the label check.
-    expect(recipe.substitutions[3]).toMatchObject({ original: "alcohol-free vanilla flavoring (labeled alcohol-free)", substitute: "1/2 teaspoon vanilla powder" });
+    expect(recipe.substitutions[3]).toMatchObject({ original: "alcohol-free vanilla flavoring (choose one labeled alcohol-free)", substitute: "1/2 teaspoon vanilla powder" });
     expect(fixes.map((f) => f.field)).toEqual(["ingredients[7]", "instructions[2]", "substitutions[3]", "substitutions[3]"]);
     // Nothing else changed: quantities, times and the other sections are the same.
     expect({ ...recipe, ingredients: [], instructions: [], substitutions: [] }).toEqual({ ...oatmeal(), ingredients: [], instructions: [], substitutions: [] });
@@ -153,7 +153,7 @@ describe("extracts and flavorings", () => {
   it("adds the missing label check to an alcohol-free product in a suggestion", () => {
     const recipe = oatmeal({ faq: [...oatmeal().faq.slice(0, 3), { question: "Can I add almond?", answer: "Add 1/4 tsp alcohol-free almond extract with the vanilla." }] });
     const { recipe: fixed } = repairMinorDietaryIssues(recipe);
-    expect(fixed.faq[3].answer).toBe("Add 1/4 tsp alcohol-free almond extract (labeled alcohol-free) with the vanilla.");
+    expect(fixed.faq[3].answer).toBe("Add 1/4 tsp alcohol-free almond extract (choose one labeled alcohol-free) with the vanilla.");
   });
 
   it("points other sections at the vanilla the ingredient list uses", () => {
@@ -212,7 +212,7 @@ describe("pork-derived ingredients are never swapped in code", () => {
     expect(repairHint("pork", "ham")).toMatch(/turkey/);
     expect(repairHint("pork", "pork-derived gelatin")).toMatch(/agar-agar/);
     expect(repairHint("pork", "lard")).toMatch(/butter/);
-    expect(repairHint("condiment", "soy sauce")).toMatch(/tamari, labeled gluten-free and alcohol-free/);
+    expect(repairHint("condiment", "soy sauce")).toMatch(/tamari \(choose one labeled gluten-free and alcohol-free\)/);
   });
 
   it("leaves cooking wine for the AI repair", () => {
@@ -237,9 +237,22 @@ describe("gluten-containing sauces", () => {
       const before = sauce(name, note);
       expect(blockers(before).some((b) => b.source === "dietary")).toBe(true);
       const { recipe } = repairMinorDietaryIssues(before);
-      expect(recipe.ingredients[9].note).toBe("labeled gluten-free and alcohol-free");
+      expect(recipe.ingredients[9].note).toBe("choose one labeled gluten-free and alcohol-free");
       expect(blockers(recipe)).toEqual([]);
     }
+  });
+
+  it("always tells the reader to choose a labeled product, never describes an unverified one as safe", () => {
+    const { recipe, fixes } = repairMinorDietaryIssues({
+      ...sauce("soy sauce"),
+      tips: ["Brush the top with a little coconut aminos before baking."],
+      faq: [...oatmeal().faq.slice(0, 3), { question: "Can I add almond?", answer: "Add 1/4 tsp alcohol-free almond extract. It adds a tree-nut allergen." }],
+    });
+    expect(recipe.ingredients[9].note).toBe("choose one labeled gluten-free and alcohol-free");
+    expect(recipe.tips[0]).toBe("Brush the top with a little coconut aminos (choose one labeled gluten-free and alcohol-free) before baking.");
+    expect(recipe.faq[3].answer).toBe("Add 1/4 tsp alcohol-free almond extract (choose one labeled alcohol-free). It adds a tree-nut allergen.");
+    for (const f of fixes.filter((x) => /label/i.test(x.to))) expect(f.to).toMatch(/choose one labeled/);
+    expect(blockers(recipe)).toEqual([]);
   });
 
   it("never fixes 'regular soy sauce' in code: the AI repair replaces it", () => {
@@ -259,7 +272,7 @@ describe("gluten-containing sauces", () => {
 describe("consistency between sections", () => {
   it("treats amounts and label notes as the same ingredient", () => {
     expect(sameIngredient("vanilla powder", "1/2 teaspoon vanilla powder")).toBe(true);
-    expect(sameIngredient("alcohol-free vanilla flavoring (labeled alcohol-free)", "alcohol-free vanilla flavoring")).toBe(true);
+    expect(sameIngredient("alcohol-free vanilla flavoring (choose one labeled alcohol-free)", "alcohol-free vanilla flavoring")).toBe(true);
     expect(sameIngredient("whole milk", "unsweetened oat milk")).toBe(false);
   });
 
@@ -354,6 +367,18 @@ describe("never publishes prohibited ingredients", () => {
     const ai = fakeProviders({ drafts: [bacon, bacon, bacon] });
     const { result, data } = run(ai);
     expect(await result).toMatchObject({ status: "failed" });
+    expect(data.recipes).toHaveLength(0);
+  });
+
+  it("runs the full safety validator again after every automatic correction", async () => {
+    // A reviewer wording fix that would bring in pork is applied in code, then
+    // the validator runs again on the result and blocks it.
+    const sneaky = { severity: "blocking" as const, kind: "wording" as const, field: "tips[0]", message: "Make the tip more useful.", quote: "Use ripe but firm peaches so the slices hold their shape.", replacement: "Top with crumbled bacon." };
+    const ai = fakeProviders({ drafts: [oatmeal()], reviewRounds: [[sneaky], [sneaky], [sneaky]] });
+    const { result, data } = run(ai);
+    const out = await result;
+    expect(out).toMatchObject({ status: "failed" });
+    expect(data.generation_attempts[0].issues).toContainEqual(expect.objectContaining({ source: "dietary", field: "tips[0]", severity: "blocking" }));
     expect(data.recipes).toHaveLength(0);
   });
 
