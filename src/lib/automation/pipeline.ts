@@ -21,11 +21,12 @@ import { claimJob, failJob, getOrCreateDailyJob, MAX_JOB_RETRIES, recordJobStep,
 import { BudgetExceededError } from "./cost";
 import { describeKeywordQueue, loadKeywordQueueStats, type KeywordQueueStats } from "./keyword-queue";
 import { replenishKeywords, type ReplenishOutcome } from "./replenish";
-import { checkBudget, logEvent, markAttempt, recordAttempt, type AttemptKind } from "./log";
+import { checkBudget, logEvent, markAttempt, recordAttempt, spentToday, type AttemptKind } from "./log";
 import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type ReviewVerdict, type SiteRefresher } from "./types";
 import { blocking, parseGeneratedRecipe, validateGeneratedRecipe } from "./validate";
 import { applyWordingFixes } from "./wording";
 import { repairGlutenRemovalClaims } from "@/lib/recipes/cookware";
+import { repairMinorDietaryIssues } from "@/lib/recipes/dietary-repair";
 
 export type RunMode = "dry_run" | "review" | "auto";
 
@@ -71,8 +72,13 @@ export type PipelineResult =
   | { status: "failed"; jobId: string; mode: RunMode; error: string }
   | { status: "succeeded"; jobId: string; mode: RunMode; recipeId: string | null; slug: string; imageUrl: string; published: boolean };
 
-/** Writer gets one repair round after its first draft. */
-export const MAX_REPAIR_ROUNDS = 1;
+/**
+ * AI repair rounds after the writer's first draft. The second round only runs
+ * when the first repair made progress but left a different, fixable problem,
+ * and the daily budget still covers it and the photo (see shouldRepairAgain).
+ * Minor ingredient problems are corrected in code first and cost no round.
+ */
+export const MAX_REPAIR_ROUNDS = 2;
 export const MAX_PHOTO_ATTEMPTS = 3;
 /** Keywords for pork or alcohol dishes skipped in one run before giving up. */
 export const MAX_KEYWORD_SKIPS = 10;
@@ -269,6 +275,40 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
     return parsed;
   };
 
+  // Decides whether another AI repair round is worth it. Never more than
+  // MAX_REPAIR_ROUNDS, so a recipe can never loop. After the first repair,
+  // another round needs: a different set of problems than last time (the
+  // repairer made progress and is not stuck), no near-duplicate problem (that
+  // needs a different dish, not a repair), and enough budget left today for the
+  // repair, its review and at least one photo.
+  const shouldRepairAgain = async (ctx: {
+    round: number;
+    blockers: Issue[];
+    previous: Issue[] | null;
+    parsed: GeneratedRecipe | null;
+    input: { keyword: KeywordRow; categories: CategoryOption[]; existingTitles: string[] };
+  }): Promise<{ ok: boolean; reason?: string }> => {
+    if (ctx.round >= MAX_REPAIR_ROUNDS) return { ok: false, reason: `No repair rounds left (limit ${MAX_REPAIR_ROUNDS}).` };
+    if (ctx.round === 0) return { ok: true };
+    if (!ctx.parsed) return { ok: false, reason: "The repaired draft could not be read." };
+    if (ctx.blockers.some((b) => b.source === "duplicate")) return { ok: false, reason: "The recipe is too close to an existing one; a repair cannot fix that." };
+    if (ctx.previous && sameProblems(ctx.previous, ctx.blockers)) return { ok: false, reason: "The last repair left exactly the same problems, so another round was not tried." };
+    const recipe = ctx.parsed;
+    const needed =
+      providers.repairer.estimateUsd({ ...ctx.input, draft: recipe, issues: ctx.blockers }) +
+      providers.reviewer.estimateUsd(recipe) +
+      providers.photographer.estimateUsd({ recipe, orientation: "landscape" }) +
+      providers.photoChecker.estimateUsd({ recipe, photo: { data: new Uint8Array(), mimeType: "image/webp" } });
+    const spent = await spentToday(db);
+    if (spent + needed > settings.daily_budget_usd) {
+      return {
+        ok: false,
+        reason: `Another repair round was not tried: with the photo it could cost up to $${needed.toFixed(2)}, and $${spent.toFixed(2)} of the $${settings.daily_budget_usd.toFixed(2)} daily budget is already spent.`,
+      };
+    }
+    return { ok: true };
+  };
+
   try {
     // --- 1. Keyword ------------------------------------------------------------
     const keyword = await step("select_keyword", async () => {
@@ -321,17 +361,28 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
       if (cp.corrected_draft) return checkCorrectedDraft(keyword, categories);
       const input = { keyword, categories, existingTitles };
       let { result, attemptId } = await callAi("recipe", providers.writer, input, 1);
+      let previous: Issue[] | null = null;
       for (let round = 0; ; round++) {
         const { recipe: parsed, issues } = await evaluate(db, result.output, keyword, categories, settings, (r) => callAi("review", providers.reviewer, r, round + 1));
         const blockers = blocking(issues);
         await markAttempt(db, attemptId, blockers.length ? "rejected" : "succeeded", issues);
+        const fixedInCode = issues.filter((i) => i.severity === "warning" && i.message.startsWith("Fixed automatically"));
+        if (fixedInCode.length > 0) {
+          await logEvent(db, jobId, "generate_recipe", "info", `Corrected ${fixedInCode.length} minor problem(s) in code; every check ran again on the corrected recipe.`, { fixes: fixedInCode });
+        }
         if (parsed && blockers.length === 0) {
           await saveCheckpoint({ recipe: parsed });
           return parsed;
         }
-        if (round >= MAX_REPAIR_ROUNDS) {
-          throw new PipelineError(`The recipe failed ${blockers.length} check(s): ${blockers.slice(0, 5).map((b) => b.message).join(" ")}`, blockers);
+        const next = await shouldRepairAgain({ round, blockers, previous, parsed, input });
+        if (!next.ok) {
+          const rounds = round === 0 ? "" : ` after ${round} repair round(s)`;
+          throw new PipelineError(`The recipe failed ${blockers.length} check(s)${rounds}: ${blockers.slice(0, 5).map((b) => b.message).join(" ")}${next.reason ? ` ${next.reason}` : ""}`, blockers);
         }
+        if (round > 0) {
+          await logEvent(db, jobId, "generate_recipe", "info", `Repair round ${round + 1} of ${MAX_REPAIR_ROUNDS}: the last repair fixed some problems but left ${blockers.length} other fixable problem(s).`, { issues: blockers });
+        }
+        previous = blockers;
         ({ result, attemptId } = parsed
           ? await callAi("repair", providers.repairer, { ...input, draft: parsed, issues: blockers }, round + 2)
           : await callAi("recipe", providers.writer, input, round + 2));
@@ -495,6 +546,14 @@ export async function releaseStaleKeywords(db: SupabaseClient, today: string): P
   return closed;
 }
 
+/** True when two rounds failed on the same problems (same source, field and message), so a repair made no progress. */
+export function sameProblems(a: Issue[], b: Issue[]): boolean {
+  const key = (i: Issue) => `${i.source}|${i.field}|${i.message}`;
+  const left = new Set(a.map(key));
+  const right = new Set(b.map(key));
+  return left.size === right.size && [...left].every((k) => right.has(k));
+}
+
 /** "No acceptable photo after 3 attempts. Attempt 1: …; …. Attempt 2: …" kept short enough for the job log. */
 export function photoFailureMessage(rejections: string[][]): string {
   const clip = (s: string) => (s.length > 200 ? `${s.slice(0, 197)}...` : s);
@@ -513,10 +572,14 @@ async function finishJob(db: SupabaseClient, jobId: string, step: string) {
 /**
  * Parses, validates, checks for duplicates and, if nothing blocks yet, asks the AI reviewer.
  *
- * Two kinds of small problems are fixed in code, without another AI call, so
+ * Three kinds of small problems are fixed in code, without another AI call, so
  * they never fail a recipe on their own:
  * - a false claim that heat, preheating or wiping removes gluten is removed
  *   (repairGlutenRemovalClaims), before any check runs;
+ * - minor pork-free / alcohol-free problems with a like-for-like fix (an
+ *   ordinary vanilla extract, a missing "labeled alcohol-free" or "labeled
+ *   gluten-free and alcohol-free" note) are corrected in every section
+ *   (repairMinorDietaryIssues), before any check runs;
  * - the reviewer's blocking "wording" issues that quote the exact text to
  *   change are applied (applyWordingFixes), and every code check runs again.
  * The returned recipe is the fixed one. What was fixed is kept as warnings.
@@ -532,13 +595,17 @@ async function evaluate(
   const parsed = parseGeneratedRecipe(raw);
   if (!parsed.recipe) return parsed;
   const cleaned = repairGlutenRemovalClaims(parsed.recipe);
-  let recipe = cleaned.recipe;
-  const autoFixed: Issue[] = cleaned.repairs.map((r) => ({
-    severity: "warning",
-    source: "cookware",
-    field: r.field,
-    message: `Fixed automatically: removed "${r.removed}" (heat, preheating or wiping does not remove gluten).`,
-  }));
+  const dietary = repairMinorDietaryIssues(cleaned.recipe);
+  let recipe = dietary.recipe;
+  const autoFixed: Issue[] = [
+    ...cleaned.repairs.map((r): Issue => ({
+      severity: "warning",
+      source: "cookware",
+      field: r.field,
+      message: `Fixed automatically: removed "${r.removed}" (heat, preheating or wiping does not remove gluten).`,
+    })),
+    ...dietary.fixes.map((f): Issue => ({ severity: "warning", source: "dietary", field: f.field, message: `Fixed automatically: "${f.from}" -> "${f.to}". ${f.reason}` })),
+  ];
   let issues = validateGeneratedRecipe(recipe, keyword, categories);
 
   const { data: slugTaken } = await db.from("recipes").select("id").eq("slug", recipe.slug).maybeSingle();
@@ -559,7 +626,7 @@ async function evaluate(
     if (wording.applied.length > 0) {
       // Prose changed: run every code check again on the fixed recipe. Title,
       // slug and focus keyword cannot change, so the duplicate checks still hold.
-      recipe = repairGlutenRemovalClaims(wording.recipe).recipe;
+      recipe = repairMinorDietaryIssues(repairGlutenRemovalClaims(wording.recipe).recipe).recipe;
       issues = issues.filter((i) => i.source === "duplicate").concat(validateGeneratedRecipe(recipe, keyword, categories));
       for (const i of wording.applied) {
         issues.push({ severity: "warning", source: "review", field: i.field, message: `Fixed automatically: ${i.message}` });

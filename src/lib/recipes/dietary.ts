@@ -7,8 +7,10 @@
 // field a reader sees (title, ingredients, steps, substitutions, tips, FAQ...)
 // and the photo brief.
 //
-// It never edits a recipe. A recipe that fails is rejected with a reason, and
-// the pipeline's normal repair round and retry limits decide what happens next.
+// It never edits a recipe. A recipe that fails is rejected with a reason. Minor,
+// well-understood problems (an ordinary vanilla extract, a missing label note)
+// are then corrected in code by dietary-repair.ts and checked again here;
+// anything else goes to the pipeline's bounded AI repair rounds.
 //
 // The rule is strict on purpose: a recipe should not mention pork or alcohol
 // at all, not even to say "instead of wine". Non-alcoholic substitutes are
@@ -27,6 +29,8 @@ export interface DietaryViolation {
   /** The text that matched, as written in the recipe. */
   match: string;
   message: string;
+  /** The product is already a non-alcoholic version; only the "check the label" note is missing. */
+  labelOnly?: boolean;
 }
 
 interface Rule {
@@ -117,7 +121,7 @@ const RULES: Rule[] = [
 ];
 
 /** "labeled", "check the label", "label says 0.0%". */
-const LABEL = /\blabel(?:l?ed|s)?\b/i;
+export const LABEL = /\blabel(?:l?ed|s)?\b/i;
 
 /**
  * A qualifier followed by at most three more words, at the end of the text
@@ -137,6 +141,15 @@ function nearQualifier(qualifier: RegExp): RegExp {
     qualifierCache.set(qualifier, near);
   }
   return near;
+}
+
+/**
+ * True when the text right before an extract or flavoring names it as a
+ * non-alcoholic product ("alcohol-free ", "glycerin-based pure "). Used by the
+ * code repair (dietary-repair.ts) to leave compliant mentions alone.
+ */
+export function hasNonAlcoholicFlavorQualifier(before: string): boolean {
+  return nearQualifier(NON_ALCOHOLIC_FLAVOR).test(before);
 }
 
 export interface CheckOptions {
@@ -164,6 +177,7 @@ export function findDietaryViolations(field: string, value: string | null | unde
             term: rule.term,
             match: m[0],
             message: `${field} uses a non-alcoholic ${m[0]} without telling the reader to check the label. Say "labeled alcohol-free" (or remove it).`,
+            labelOnly: true,
           });
         }
         continue;
@@ -225,7 +239,7 @@ const SOY_BASES = new Set(["soy sauce", "tamari", "coconut aminos", "liquid amin
 const GLUTEN_FREE = /\bgluten[- ]free\b|\bcertified gf\b/i;
 const ALCOHOL_FREE = new RegExp(`\\b(?:${NON_ALCOHOLIC.source})`, "i");
 /** "regular soy sauce", "any fish sauce": never compliant, whatever else the sentence says. */
-const UNSAFE_PREFIX = /\b(?:regular|ordinary|standard|traditional|conventional|normal|any|most|plain|store[- ]bought)\s+$/i;
+export const UNSAFE_PREFIX = /\b(?:regular|ordinary|standard|traditional|conventional|normal|any|most|plain|store[- ]bought)\s+$/i;
 
 /** True when one piece of text says the product is labeled gluten-free and alcohol-free. */
 export function isCompliantCondimentText(text: string): boolean {

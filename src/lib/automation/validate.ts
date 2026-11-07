@@ -5,6 +5,7 @@
 
 import { analyzeCookwareClaims } from "@/lib/recipes/cookware";
 import { analyzeDietaryRestrictions } from "@/lib/recipes/dietary";
+import { repairHint, sameIngredient } from "@/lib/recipes/dietary-repair";
 import { getPublishReadiness } from "@/lib/recipes/validation";
 import { compareAllergens, undeclaredOptionalAllergens } from "./allergens";
 import { checkConsistency } from "./consistency";
@@ -50,7 +51,9 @@ export function validateGeneratedRecipe(recipe: GeneratedRecipe, keyword: Keywor
 
   // Pork-free and alcohol-free, in every field including substitutions, tips,
   // FAQ and the photo brief. Always blocking.
-  for (const v of analyzeDietaryRestrictions(recipe)) add("dietary", "blocking", v.field, v.message);
+  for (const v of analyzeDietaryRestrictions(recipe)) {
+    issues.push({ source: "dietary", severity: "blocking", field: v.field, message: v.message, hint: repairHint(v.category, v.term) });
+  }
 
   // A claim that heat, preheating or wiping removes gluten is false. The
   // pipeline removes such claims in code first (repairGlutenRemovalClaims);
@@ -82,6 +85,10 @@ export function validateGeneratedRecipe(recipe: GeneratedRecipe, keyword: Keywor
   if (recipe.faq.length < 4 || recipe.faq.length > 8) add("seo", "blocking", "faq", `Include 4 to 8 FAQs (found ${recipe.faq.length}).`);
   if (recipe.introduction.length < 400) add("seo", "blocking", "introduction", "The introduction must be at least 400 characters.");
   if (recipe.substitutions.length === 0) add("seo", "blocking", "substitutions", "Add at least one substitution.");
+  // A substitution must offer something different from the ingredient it replaces.
+  recipe.substitutions.forEach((s, i) => {
+    if (sameIngredient(s.original, s.substitute)) add("consistency", "blocking", `substitutions[${i}]`, `The substitution swaps "${s.original}" for itself. Offer a real alternative or remove it.`);
+  });
   if (!recipe.storage_instructions.trim()) add("seo", "blocking", "storage_instructions", "Add storage instructions.");
 
   // Generated recipes never carry nutrition guesses.
