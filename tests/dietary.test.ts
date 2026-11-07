@@ -448,7 +448,7 @@ describe("soy sauce and similar condiments", () => {
       expect.objectContaining({ severity: "blocking", field: "substitutions[0]", message: expect.stringContaining("gluten-free and alcohol-free") }),
     ]);
     const { db, data } = automationDb();
-    const ai = fakeProviders({ drafts: [goodRecipe({ tips: ["Brush with soy sauce."] }), goodRecipe()] });
+    const ai = fakeProviders({ drafts: [goodRecipe({ tips: ["Brush with regular soy sauce."] }), goodRecipe()] });
     expect(await run(db, ai).result).toMatchObject({ status: "succeeded" });
     expect((ai.repairer.inputs[0] as { issues: Array<{ message: string }> }).issues[0].message).toMatch(/soy sauce.*gluten-free and alcohol-free/);
     expect(data.recipes).toHaveLength(1);

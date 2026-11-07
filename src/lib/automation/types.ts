@@ -39,6 +39,8 @@ export interface Issue {
   field: string;
   message: string;
   source: "schema" | "readiness" | "consistency" | "allergens" | "seo" | "duplicate" | "review" | "photo" | "dietary" | "cookware";
+  /** For the repair step: a suggested compliant replacement (dietary problems). */
+  hint?: string;
 }
 
 /** One AI request's result, with what it cost. */

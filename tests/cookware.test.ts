@@ -180,8 +180,8 @@ describe("the reviewer's wording fixes", () => {
 });
 
 describe("pipeline", () => {
-  it("keeps the existing limits: one repair round per run and three job retries", () => {
-    expect(MAX_REPAIR_ROUNDS).toBe(1);
+  it("keeps the repair and retry limits bounded: at most two repair rounds per run and three job retries", () => {
+    expect(MAX_REPAIR_ROUNDS).toBe(2);
     expect(MAX_JOB_RETRIES).toBe(3);
   });
 
@@ -254,7 +254,7 @@ describe("pipeline", () => {
 
 describe("prompts", () => {
   it("tell the writer to assume clean cookware and never claim heat removes gluten", () => {
-    expect(PROMPT_VERSION).toBe("recipe-v6");
+    expect(PROMPT_VERSION).toBe("recipe-v7");
     expect(WRITER_SYSTEM).toMatch(/Assume the reader cooks with clean cookware/);
     expect(WRITER_SYSTEM).toMatch(/Heat a clean skillet over medium heat/);
     expect(WRITER_SYSTEM).toMatch(/Never say or imply that heating, preheating/);

@@ -9,7 +9,7 @@ A GitHub Actions workflow runs a small program (the "worker"). The worker:
 1. Picks the best unused keyword from your Keywords list, skipping hard ones and ones too similar to an existing recipe. If fewer than 30 keywords are usable, it first adds new keyword ideas (see [Keyword queue and automatic top-up](#keyword-queue-and-automatic-top-up)).
 2. Asks Claude (Anthropic) to write the recipe as structured data.
 3. Checks it in code: gluten ingredients and cross-contact notes, allergens, ingredients used in the steps, times, oven and food-safety temperatures, SEO fields, duplicates.
-4. Asks a second, independent Claude review to look for errors. A failing draft gets one repair attempt, then the run stops. Small wording problems are fixed in code instead (see [Cookware wording](#cookware-wording)).
+4. Asks a second, independent Claude review to look for errors. Minor problems are corrected in code first (see [Cookware wording](#cookware-wording) and [Minor ingredient corrections](#minor-ingredient-corrections)). A draft that still fails gets an AI repair, and at most one more if the first repair made progress; then the run stops.
 5. Asks OpenAI for one photo (landscape 3:2 for the site), and Claude checks that it matches the recipe. The Pinterest Pin is made later from this same photo, so no second AI image is paid for.
 6. Saves the recipe as **In review** for you to approve, or, in Automatic mode, publishes it.
 7. In Automatic mode with automatic Pins on: draws its Pinterest Pin, checks the recipe page is live, and posts the Pin to your board (see [Full automation](#full-automation-recipes-and-pins)).
@@ -47,13 +47,27 @@ A **dry run** is the exception: it works while automation is off, because it nev
 Every AI recipe must be free from pork, pork-derived ingredients (bacon, ham, lard, pork gelatin...) and intentionally added alcohol (wine, beer, spirits, liqueurs, ordinary vanilla and other extracts...). It is enforced in four places:
 
 1. **The writer's instructions** tell Claude never to use or mention them, in any field.
-2. **A code check** (`src/lib/recipes/dietary.ts`) scans every field of each draft: title, ingredients, steps, substitutions, tips, FAQ, SEO text and the photo brief. A draft that fails gets the usual single repair round with the exact reason; if the repair still fails, the job fails like any other rejected draft (same retries and daily budget). The check never edits a recipe itself. The same check runs again right before the photo, so a recipe resumed from an earlier run is checked too.
+2. **A code check** (`src/lib/recipes/dietary.ts`) scans every field of each draft: title, ingredients, steps, substitutions, tips, FAQ, SEO text and the photo brief. Minor problems are corrected in code first (see [Minor ingredient corrections](#minor-ingredient-corrections)); anything else goes to the AI repair with the exact reason and a suggested compliant replacement. If the repairs still fail, the job fails like any other rejected draft (same retries and daily budget). The same check runs again right before the photo, so nothing prohibited can reach the photo, save or publish steps, even if a repair went wrong.
 3. **The independent reviewer** is told to block pork, alcohol and hidden sources of them.
 4. **Keywords** for pork or alcohol dishes ("bacon wrapped dates", "beer bread") are marked *rejected* without any AI call, and the next keyword is used.
 
 Allowed: chicken, turkey or beef versions named as such ("turkey bacon", "beef gelatin"), wine and cider vinegars, and non-alcoholic substitutes named as such ("alcohol-free vanilla extract", "non-alcoholic red wine") with a note to check the label. **Soy sauce and similar condiments** (soy sauce, tamari, coconut aminos, fish sauce, oyster sauce, hoisin, miso, gochujang, teriyaki sauce, ponzu, bottled cooking sauces) are never assumed safe: in the ingredient list and in substitutions, tips and FAQ answers, the same item must say it is labeled both gluten-free and alcohol-free. Steps may refer to one only when the ingredient list has a compliant version. "Regular soy sauce" is always rejected, and XO sauce counts as pork (it contains ham).
 
 Approving an AI draft in the admin dashboard also runs the check. Recipes that are already published are not changed.
+
+### Minor ingredient corrections
+
+A good recipe used to fail the whole day because of one small slip, such as "vanilla extract" left in one substitution (November 7, 2026). Problems are now sorted into three kinds:
+
+| Kind | Examples | What happens |
+| --- | --- | --- |
+| **Minor, fixed in code** (no AI cost) | "vanilla extract", "pure almond extract", "vanilla bean paste"; an alcohol-free product without "labeled alcohol-free"; soy sauce or tamari without "labeled gluten-free and alcohol-free" | `src/lib/recipes/dietary-repair.ts` swaps the product for "alcohol-free vanilla flavoring" (same amount) or adds a label instruction ("choose one labeled alcohol-free", "choose one labeled gluten-free and alcohol-free"), in **every** section at once: ingredients, steps, substitutions (including the "original" side), tips, FAQ and the other text. If the ingredient list already uses a compliant vanilla (for example vanilla powder), the other sections are pointed at it. A substitution that ends up swapping an ingredient for itself is removed. The label note always tells the reader to choose a labeled product; it never says an ordinary sauce or extract is safe. |
+| **Repairable by AI** | bacon, ham, pork sausage, lard, gelatin, cooking wine, beer, spirits, "regular soy sauce", or any mention in a sentence about avoiding it ("instead of vanilla extract...") | Not changed by a word swap, because that could make the recipe wrong (turkey bacon cooks differently; wine needs a different step). The AI repair gets each problem with a suggested replacement (turkey bacon labeled gluten-free, broth labeled gluten-free, tamari labeled gluten-free and alcohol-free...) and must update the whole recipe to match. |
+| **Not repairable** | a near-duplicate of an existing recipe; a repair that leaves exactly the same problems | The run stops without spending more. |
+
+After any correction, every code check and the independent review run again on the corrected recipe. Each correction is listed as a warning on the job's attempt and in the job log.
+
+**Repair limits.** At most two AI repair rounds per run. The second round only runs when the first repair fixed something but left a different problem, the problem is not a near-duplicate, and today's budget still covers the repair, its review and a photo. The $3 daily budget, three job retries, one recipe per UTC day and the keyword top-up are unchanged.
 
 ## Keyword queue and automatic top-up
 
