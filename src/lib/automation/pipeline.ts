@@ -27,6 +27,7 @@ import { blocking, parseGeneratedRecipe, validateGeneratedRecipe } from "./valid
 import { applyWordingFixes } from "./wording";
 import { repairGlutenRemovalClaims } from "@/lib/recipes/cookware";
 import { repairMinorDietaryIssues } from "@/lib/recipes/dietary-repair";
+import { repairMeatTemperatures } from "@/lib/recipes/meat-safety";
 
 export type RunMode = "dry_run" | "review" | "auto";
 
@@ -572,7 +573,7 @@ async function finishJob(db: SupabaseClient, jobId: string, step: string) {
 /**
  * Parses, validates, checks for duplicates and, if nothing blocks yet, asks the AI reviewer.
  *
- * Three kinds of small problems are fixed in code, without another AI call, so
+ * Four kinds of small problems are fixed in code, without another AI call, so
  * they never fail a recipe on their own:
  * - a false claim that heat, preheating or wiping removes gluten is removed
  *   (repairGlutenRemovalClaims), before any check runs;
@@ -580,6 +581,10 @@ async function finishJob(db: SupabaseClient, jobId: string, step: string) {
  *   ordinary vanilla extract, a missing "labeled alcohol-free" or "labeled
  *   gluten-free and alcohol-free" note) are corrected in every section
  *   (repairMinorDietaryIssues), before any check runs;
+ * - a safe internal meat temperature that is missing, too low (160°F for a
+ *   turkey sausage) or paired with the wrong Celsius value is corrected in the
+ *   steps, tips, FAQ and substitutions alike, but only when the ingredient list
+ *   says exactly which meat it is (repairMeatTemperatures); never lowered;
  * - the reviewer's blocking "wording" issues that quote the exact text to
  *   change are applied (applyWordingFixes), and every code check runs again.
  * The returned recipe is the fixed one. What was fixed is kept as warnings.
@@ -596,7 +601,8 @@ async function evaluate(
   if (!parsed.recipe) return parsed;
   const cleaned = repairGlutenRemovalClaims(parsed.recipe);
   const dietary = repairMinorDietaryIssues(cleaned.recipe);
-  let recipe = dietary.recipe;
+  const meat = repairMeatTemperatures(dietary.recipe);
+  let recipe = meat.recipe;
   const autoFixed: Issue[] = [
     ...cleaned.repairs.map((r): Issue => ({
       severity: "warning",
@@ -605,6 +611,12 @@ async function evaluate(
       message: `Fixed automatically: removed "${r.removed}" (heat, preheating or wiping does not remove gluten).`,
     })),
     ...dietary.fixes.map((f): Issue => ({ severity: "warning", source: "dietary", field: f.field, message: `Fixed automatically: "${f.from}" -> "${f.to}". ${f.reason}` })),
+    ...meat.fixes.map((f): Issue => ({
+      severity: "warning",
+      source: "consistency",
+      field: f.field,
+      message: f.from ? `Fixed automatically: "${f.from}" -> "${f.to}". ${f.reason}` : `Fixed automatically: added "${f.to}" ${f.reason}`,
+    })),
   ];
   let issues = validateGeneratedRecipe(recipe, keyword, categories);
 
@@ -626,7 +638,7 @@ async function evaluate(
     if (wording.applied.length > 0) {
       // Prose changed: run every code check again on the fixed recipe. Title,
       // slug and focus keyword cannot change, so the duplicate checks still hold.
-      recipe = repairMinorDietaryIssues(repairGlutenRemovalClaims(wording.recipe).recipe).recipe;
+      recipe = repairMeatTemperatures(repairMinorDietaryIssues(repairGlutenRemovalClaims(wording.recipe).recipe).recipe).recipe;
       issues = issues.filter((i) => i.source === "duplicate").concat(validateGeneratedRecipe(recipe, keyword, categories));
       for (const i of wording.applied) {
         issues.push({ severity: "warning", source: "review", field: i.field, message: `Fixed automatically: ${i.message}` });
