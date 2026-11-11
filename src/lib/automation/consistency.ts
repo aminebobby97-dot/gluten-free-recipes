@@ -3,15 +3,19 @@
 // in addition to getPublishReadiness() (completeness, gluten, claims). They are
 // heuristics tuned to catch generator mistakes, not a substitute for cooking.
 
+import { checkMeatSafety, type MeatSafetyText } from "@/lib/recipes/meat-safety";
 import type { Ingredient, InstructionStep, Recipe } from "@/lib/recipes/types";
 
 export interface ConsistencyIssue {
   severity: "blocking" | "warning";
   field: string;
   message: string;
+  /** For the AI repair step: exactly what to write. */
+  hint?: string;
 }
 
-export type ConsistencyInput = Pick<Recipe, "ingredients" | "instructions" | "prep_time" | "cook_time" | "servings">;
+export type ConsistencyInput = Pick<Recipe, "ingredients" | "instructions" | "prep_time" | "cook_time" | "servings"> &
+  Omit<MeatSafetyText, "ingredients" | "instructions">;
 
 /** Words that describe an ingredient rather than name it. */
 const DESCRIPTORS = new Set(
@@ -85,12 +89,6 @@ export function ovenTemperaturesF(text: string): number[] {
   return [...text.matchAll(/(\d{3})\s*(?:°\s*F|degrees\s*F(?:ahrenheit)?|ºF|F\b)/gi)].map((m) => Number(m[1]));
 }
 
-const SAFE_TEMPS: Array<[RegExp, number, string]> = [
-  [/\b(chicken|turkey|duck|poultry)\b/i, 165, "poultry"],
-  [/\bground (beef|pork|lamb|veal|meat)\b|\b(meatballs?|burgers?|sausages?)\b/i, 160, "ground meat"],
-  [/\b(pork (chops?|tenderloin|loin|shoulder)|steaks?|lamb chops?)\b/i, 145, "whole cuts of pork, beef or lamb"],
-];
-
 /** Runs every consistency check. Blocking issues must be fixed before saving. */
 export function checkConsistency(recipe: ConsistencyInput): ConsistencyIssue[] {
   const issues: ConsistencyIssue[] = [];
@@ -150,14 +148,11 @@ export function checkConsistency(recipe: ConsistencyInput): ConsistencyIssue[] {
     if (t < 200 || t > 550) block("instructions", `${t}°F is not a realistic cooking temperature.`);
   }
 
-  // 5. Food safety: meat recipes state a safe internal temperature.
-  const ingredientText = (recipe.ingredients ?? []).map((i) => i.name).join(" ");
-  for (const [pattern, temp, label] of SAFE_TEMPS) {
-    if (pattern.test(ingredientText) && !new RegExp(`\\b${temp}\\s*(°|degrees|º)`, "i").test(stepText)) {
-      block("instructions", `Recipes with ${label} must say to cook it to an internal temperature of ${temp}°F.`);
-      break;
-    }
-  }
+  // 5. Food safety: each meat has its own safe internal temperature (poultry
+  // 165°F, ground beef or lamb 160°F, steaks and chops 145°F), stated in the
+  // steps and never contradicted by a lower one in a tip, FAQ or substitution.
+  // See src/lib/recipes/meat-safety.ts.
+  for (const m of checkMeatSafety(recipe)) issues.push(m);
 
   // 6. Servings are sensible.
   if (recipe.servings != null && recipe.servings > 24) warn("servings", `${recipe.servings} servings is unusually many; check the quantities.`);

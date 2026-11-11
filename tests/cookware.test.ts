@@ -254,7 +254,7 @@ describe("pipeline", () => {
 
 describe("prompts", () => {
   it("tell the writer to assume clean cookware and never claim heat removes gluten", () => {
-    expect(PROMPT_VERSION).toBe("recipe-v7");
+    expect(PROMPT_VERSION).toBe("recipe-v8");
     expect(WRITER_SYSTEM).toMatch(/Assume the reader cooks with clean cookware/);
     expect(WRITER_SYSTEM).toMatch(/Heat a clean skillet over medium heat/);
     expect(WRITER_SYSTEM).toMatch(/Never say or imply that heating, preheating/);

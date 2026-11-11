@@ -60,7 +60,7 @@ export function validateGeneratedRecipe(recipe: GeneratedRecipe, keyword: Keywor
   // one it could not remove cleanly blocks, so the repair step rewrites it.
   for (const c of analyzeCookwareClaims(recipe)) add("cookware", "blocking", c.field, `${c.message} Found: "${c.phrase}"`);
 
-  for (const c of checkConsistency(recipe)) add("consistency", c.severity, c.field, c.message);
+  for (const c of checkConsistency(recipe)) issues.push({ source: "consistency", severity: c.severity, field: c.field, message: c.message, ...(c.hint ? { hint: c.hint } : {}) });
   for (const a of compareAllergens(recipe.allergens, recipe.ingredients)) add("allergens", a.severity, "allergens", a.message);
   const suggestions = [
     ...recipe.faq.map((f, i) => ({ field: `faq[${i}]`, text: `${f.question} ${f.answer}` })),

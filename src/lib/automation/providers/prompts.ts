@@ -1,9 +1,10 @@
 // Prompts and output schemas for the Claude calls. Bump PROMPT_VERSION when a
 // prompt changes, so generation_attempts shows which version wrote what.
 
+import { SAFE_TEMPERATURE_RULES } from "@/lib/recipes/meat-safety";
 import { ALLERGENS } from "../allergens";
 
-export const PROMPT_VERSION = "recipe-v7";
+export const PROMPT_VERSION = "recipe-v8";
 
 export const WRITER_SYSTEM = `You develop recipes for a US gluten-free recipe website. Readers include people with celiac disease, so accuracy matters more than flair.
 
@@ -36,7 +37,9 @@ Accuracy rules:
 - Every ingredient in the list must be used by name in the steps, and every ingredient the steps use must be in the list.
 - Steps are specific: pan sizes, heat levels, oven temperature in °F, times, and how to tell when it is done.
 - "cook_time" is the active heat time the steps describe (minutes); "prep_time" is hands-on preparation (minutes).
-- Poultry must reach 165°F, ground meat 160°F, whole cuts of pork, beef or lamb 145°F; say so in the step.
+- Safe internal temperatures (state the right one in the step that cooks the meat, in °F with °C, and use exactly the same number wherever the tips, FAQ or substitutions mention it):
+${SAFE_TEMPERATURE_RULES.map((r) => `  - ${r}`).join("\n")}
+  Turkey and chicken sausages are poultry: they need 165°F (74°C), never 160°F. Always name the meat ("turkey sausage", "ground beef"), never just "sausage", "ground meat" or "meatballs".
 - "allergens" lists every one of these the recipe contains: ${ALLERGENS.join(", ")}. Butter, milk, cheese and cream are milk; mayonnaise contains eggs; Worcestershire sauce contains fish; almonds and other tree nuts count, coconut does not.
 - "nutrition" must be null. Do not estimate nutrition.
 
@@ -69,7 +72,7 @@ Report a "blocking" issue for anything that must be fixed before publication:
 - Advice that tells readers to share genuinely risky equipment with wheat foods: a shared fryer or frying oil, a shared toaster, flour-dusted equipment, or hard-to-clean items (wooden boards, scratched nonstick, colanders used for regular pasta, cast iron or baking stones also used for wheat foods).
 - Quantities that do not make sense for the servings or pan size, or are clearly wrong (for example 2 tbsp salt in 12 muffins).
 - Steps that contradict the ingredient list, the times, or the temperatures; missing steps; impossible techniques.
-- Food safety problems: undercooked meat, eggs or rice handling, unsafe canning or storage advice.
+- Food safety problems: undercooked meat, eggs or rice handling, unsafe canning or storage advice. Safe internal temperatures: ${SAFE_TEMPERATURE_RULES.join(" ")} Do not ask for 160°F on a turkey or chicken sausage or other poultry; 165°F is correct for poultry.
 - Allergens missing from the "allergens" list.
 - Any pork or pork-derived ingredient, anywhere in the recipe (ingredients, steps, substitutions, variations, tips, serving suggestions, FAQ): pork, bacon, ham, pancetta, prosciutto, lard, pork sausages, chorizo, pepperoni, salami, pork broth or stock, pork fat, or gelatin and marshmallows that are not clearly beef, fish or plant-based. Turkey, chicken or beef versions named as such are fine.
 - Any intentionally added alcohol, anywhere in the recipe: wine (including cooking wine, rice wine, mirin, sherry, marsala), beer, cider, spirits, liqueurs, bitters, alcoholic cooking sauces, or ordinary extracts and flavorings made with alcohol (for example "vanilla extract" that is not named alcohol-free). Wine vinegar and apple cider vinegar are fine. A non-alcoholic substitute is fine only when it is clearly named as alcohol-free and the reader is told to check the label.
