@@ -106,6 +106,16 @@ export interface PhotoRequest {
   orientation: PhotoOrientation;
   /** Problems the photo checker found in earlier attempts for this recipe, to steer clear of. */
   avoid?: string[];
+  /** Which try this is (1 = first). Each later try asks for a simpler composition. */
+  attempt?: number;
+}
+
+/** What the photo checker is given. */
+export interface PhotoCheckRequest {
+  recipe: GeneratedRecipe;
+  photo: Photo;
+  /** The plating the photographer was asked for on this attempt (it wins over the brief's arrangement). */
+  plating?: string;
 }
 
 export interface PhotoVerdict {
@@ -131,7 +141,7 @@ export interface AiProviders {
   repairer: AiStep<RepairInput, unknown>;
   reviewer: AiStep<GeneratedRecipe, ReviewVerdict>;
   photographer: AiStep<PhotoRequest, Photo>;
-  photoChecker: AiStep<{ recipe: GeneratedRecipe; photo: Photo }, PhotoVerdict>;
+  photoChecker: AiStep<PhotoCheckRequest, PhotoVerdict>;
   /** Suggests new keywords when the queue runs low. Without it the queue is never topped up automatically. */
   keywordWriter?: AiStep<KeywordIdeaRequest, KeywordIdea[]>;
 }

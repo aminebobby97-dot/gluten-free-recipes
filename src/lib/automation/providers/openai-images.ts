@@ -6,9 +6,10 @@ import OpenAI from "openai";
 import sharp from "sharp";
 import { AiCallError, type AiStep, type Photo, type PhotoOrientation, type PhotoRequest } from "../types";
 import { roughTokens } from "./anthropic";
+import { photoPlan, servedCutOrFolded, simplifyLevel } from "../photo-composition";
 
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
-export const IMAGE_PROMPT_VERSION = "photo-v2";
+export const IMAGE_PROMPT_VERSION = "photo-v3";
 
 /**
  * OpenAI list prices (USD per million tokens) from developers.openai.com/api/docs/pricing,
@@ -50,26 +51,46 @@ const FLAT_DISH = /\b(pizza|crust|flatbread|focaccia|tart|galette|quiche|pie|coo
 /** The most earlier problems repeated in the prompt, newest first. */
 const MAX_AVOID = 6;
 
-export function imagePrompt({ recipe, orientation, avoid = [] }: PhotoRequest): string {
+/** The prompt version logged with each photo, with the simplification level ("photo-v3-s1"). */
+export function imagePromptVersion(attempt = 1): string {
+  return `${IMAGE_PROMPT_VERSION}-s${simplifyLevel(attempt)}`;
+}
+
+/**
+ * The image prompt for one attempt. Attempt 1 uses the writer's photo brief;
+ * each later attempt drops it and asks for a simpler scene (see photoPlan), so
+ * a retry does not repeat the composition that was rejected.
+ */
+export function imagePrompt({ recipe, orientation, avoid = [], attempt = 1 }: PhotoRequest): string {
+  const plan = photoPlan(recipe, attempt, avoid, FLAT_DISH.test(recipe.title) ? "overhead" : "angled");
   const frame = orientation === "portrait" ? "Vertical 2:3 composition with the dish in the lower two thirds." : "Horizontal 3:2 composition with the dish slightly off center.";
-  const angle = FLAT_DISH.test(recipe.title)
-    ? "Camera directly overhead (top-down flat lay), the whole dish in view on a plain board, baking sheet or plate."
-    : "Camera at a natural 30 to 45 degree angle, the whole dish in view on a plain plate, board or baking dish.";
+  const angle =
+    plan.angle === "overhead"
+      ? "Camera directly overhead (top-down flat lay), the whole dish in view on a plain board, baking sheet or plate."
+      : "Camera at a natural 30 to 45 degree angle, the whole dish in view on a plain plate, board or baking dish.";
+  const foods = recipe.ingredients.map((i) => i.name).join(", ");
   const lessons = [...new Set(avoid.map((p) => p.trim()).filter(Boolean))].slice(-MAX_AVOID);
   return [
     `Realistic editorial food photograph of ${recipe.title}.`,
-    recipe.image_brief,
-    `It contains only these foods: ${recipe.ingredients.map((i) => i.name).join(", ")}.`,
+    plan.useBrief ? recipe.image_brief : "A plain, believable home-style photo of the finished dish, true to the recipe.",
+    plan.useBrief
+      ? `It contains only these foods: ${foods}.`
+      : `It is made only from these foods, cooked and combined as in the recipe, not laid out raw around the plate: ${foods}.`,
+    `${plan.plating} This plating wins over any other arrangement described here.`,
     frame,
     angle,
     // Simple scenes are what image models render believably; these rules win over the brief.
-    "Keep the scene simple: one dish, at most two plain props, nothing folded, rolled, lifted, cut away or tilted to show an underside or a hidden side.",
+    ...plan.scene,
+    servedCutOrFolded(recipe)
+      ? "Apart from the plating above, nothing lifted, peeled back or tilted to show an underside or a hidden side."
+      : "Nothing folded, rolled, lifted, cut away or tilted to show an underside or a hidden side.",
     "No parchment or paper shapes, no utensils touching, cutting or lying on the food.",
     "Baked doughs and crusts are evenly golden brown with a realistic dry, matte surface; no melted cheese, sauce or toppings that are not in the ingredient list.",
     "If anything above conflicts with these composition rules, follow these rules.",
     "Shot on a full-frame camera with a 50mm lens, natural window light, true-to-life colors and textures, appetizing but not glossy or oversaturated.",
     "No people, no hands, no text, no labels, no logos, no watermarks. No bread, pasta, crackers or pastries that are not part of this recipe.",
     ...(lessons.length ? [`An earlier photo of this dish was rejected for these problems; make sure none of them appears: ${lessons.join(" ")}`] : []),
+    ...(plan.corrections.length ? [`To fix that, this time: ${plan.corrections.join(" ")}`] : []),
   ].join(" ");
 }
 
@@ -124,7 +145,7 @@ export function createOpenAiPhotographer(opts: OpenAiPhotographerOptions = {}): 
       } catch (error) {
         throw new AiCallError(`The generated image could not be processed: ${(error as Error).message}`, costUsd, "openai", model);
       }
-      return { output: photo, provider: "openai", model, promptVersion: IMAGE_PROMPT_VERSION, costUsd, inputTokens: usage?.input_tokens, outputTokens: usage?.output_tokens };
+      return { output: photo, provider: "openai", model, promptVersion: imagePromptVersion(input.attempt), costUsd, inputTokens: usage?.input_tokens, outputTokens: usage?.output_tokens };
     },
   };
 }

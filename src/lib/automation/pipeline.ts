@@ -22,6 +22,7 @@ import { BudgetExceededError } from "./cost";
 import { describeKeywordQueue, loadKeywordQueueStats, type KeywordQueueStats } from "./keyword-queue";
 import { replenishKeywords, type ReplenishOutcome } from "./replenish";
 import { checkBudget, logEvent, markAttempt, recordAttempt, spentToday, type AttemptKind } from "./log";
+import { photoPlan } from "./photo-composition";
 import { AiCallError, type AiProviders, type AiResult, type AiStep, type CategoryOption, type GeneratedRecipe, type ImageStore, type Issue, type KeywordRow, type Photo, type ReviewVerdict, type SiteRefresher } from "./types";
 import { blocking, parseGeneratedRecipe, validateGeneratedRecipe } from "./validate";
 import { applyWordingFixes } from "./wording";
@@ -402,15 +403,18 @@ export async function runDailyRecipe(opts: PipelineOptions): Promise<PipelineRes
     // One landscape photo for the site. The Pinterest Pin is drawn from this same
     // photo when the recipe is published (src/lib/services/pinterest.ts), so no
     // second AI image is generated.
-    // Each rejected photo's problems go into the next attempt's prompt, so a
-    // retry steers away from them instead of repeating them. The checker itself
-    // is never relaxed.
+    // Each rejected photo's problems go into the next attempt's prompt, and each
+    // retry asks for a simpler composition (src/lib/automation/photo-composition.ts),
+    // so a retry does not repeat the same scene. The checker itself is never relaxed.
     const takePhoto = async (attempts: number): Promise<StoredImage> => {
       const rejections: string[][] = [];
       for (let attempt = 1; attempt <= attempts; attempt++) {
         const avoid = rejections.flat();
-        const { result: shot, attemptId } = await callAi("image", providers.photographer, { recipe, orientation: "landscape", ...(avoid.length ? { avoid } : {}) }, attempt);
-        const { result: check } = await callAi("image_check", providers.photoChecker, { recipe, photo: shot.output }, attempt);
+        // Attempt 1 is the normal shot; each retry asks for a simpler plating
+        // (photoPlan), and the checker is told which plating was asked for.
+        const { plating } = photoPlan(recipe, attempt, avoid);
+        const { result: shot, attemptId } = await callAi("image", providers.photographer, { recipe, orientation: "landscape", attempt, ...(avoid.length ? { avoid } : {}) }, attempt);
+        const { result: check } = await callAi("image_check", providers.photoChecker, { recipe, photo: shot.output, plating }, attempt);
         if (check.output.ok) {
           const ext = shot.output.mimeType.split("/")[1];
           const folder = mode === "dry_run" ? "dry-run" : "recipes";
