@@ -29,7 +29,7 @@ describe("OpenAI photographer", () => {
     expect([meta.format, meta.width, meta.height]).toEqual(["webp", 1536, 1024]);
     // 300 text tokens at $2.50/M + 6,000 output tokens at $15/M
     expect(result.costUsd).toBeCloseTo(0.0908, 6);
-    expect(result).toMatchObject({ provider: "openai", promptVersion: "photo-v2" });
+    expect(result).toMatchObject({ provider: "openai", promptVersion: "photo-v3-s0" });
   });
 
   it("makes the Pinterest image a 1000x1500 portrait", async () => {
@@ -116,7 +116,7 @@ describe("imagePrompt: simple, believable compositions", () => {
 
   it("rules out the compositions image models get wrong, over whatever the brief asked for", () => {
     const prompt = imagePrompt({ recipe: pizza(), orientation: "landscape" });
-    expect(prompt).toMatch(/nothing folded, rolled, lifted, cut away or tilted to show an underside/);
+    expect(prompt).toMatch(/nothing folded, rolled, lifted, cut away or tilted to show an underside/i);
     expect(prompt).toMatch(/No parchment or paper shapes, no utensils touching, cutting or lying on the food/);
     expect(prompt).toMatch(/golden brown with a realistic dry, matte surface; no melted cheese/);
     expect(prompt).toMatch(/conflicts with these composition rules, follow these rules/);

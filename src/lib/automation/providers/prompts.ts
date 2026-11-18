@@ -4,7 +4,7 @@
 import { SAFE_TEMPERATURE_RULES } from "@/lib/recipes/meat-safety";
 import { ALLERGENS } from "../allergens";
 
-export const PROMPT_VERSION = "recipe-v8";
+export const PROMPT_VERSION = "recipe-v9";
 
 export const WRITER_SYSTEM = `You develop recipes for a US gluten-free recipe website. Readers include people with celiac disease, so accuracy matters more than flair.
 
@@ -58,7 +58,7 @@ SEO rules:
 - "faq": 4 to 6 questions a real reader would ask about this dish (substitutions, make-ahead, freezing, texture problems, gluten-free specifics). Answers 1 to 3 sentences.
 - "tips": 2 to 4. "substitutions": 1 to 4, each saying what changes. "storage_instructions": fridge and freezer guidance with times.
 - "image_alt": one plain sentence describing the finished dish as photographed, 10 to 125 characters, no "image of".
-- "image_brief": what the finished dish looks like for a food photographer: the dish, its color and texture, the serving vessel, at most 2 plain props, background, light. Keep it a simple, believable shot of the whole finished dish: overhead for flat dishes (pizza, crusts, tarts, cookies), otherwise a 30 to 45 degree angle. Nothing folded, lifted, sliced open or cut away to show an underside or inside, no folded parchment, no utensils on the food. Show only foods in the recipe. No people, hands, text or logos.
+- "image_brief": what the finished dish looks like for a food photographer: the dish, its color and texture, the serving vessel, at most 2 plain props, background, light. Keep it a simple, believable shot plated the way a home cook would serve it, on one plate or dish: overhead for flat dishes (pizza, crusts, tarts, cookies), otherwise a 30 to 45 degree angle. Show 2 or 3 natural portions lying flat or slightly overlapping, never a tall stack: quesadillas as 2 or 3 wedges, sandwiches and wraps as 2 halves, tacos folded once around their filling. Nothing lifted, peeled back or tilted to show an underside, no folded parchment, no utensils on the food. Show only foods in the recipe. No people, hands, text or logos.
 - "category_slug": the best matching slug from the categories given.
 
 For optional text fields with nothing to say ("group", "unit", "note", "metric", "yield_description"), use an empty string.`;
@@ -99,6 +99,7 @@ Reject the photo ("ok": false) if any of these is true:
 - It shows food that visibly contains gluten and is not in the recipe (ordinary bread, pasta, crackers, pastries, beer).
 - It shows text, logos, watermarks, people, hands, or utensils floating or merged into food.
 - It has obvious AI artifacts: melted or duplicated objects, impossible geometry, garbled textures.
+- The food is arranged in a way nobody would serve it or that could not physically stand, for example a tall or leaning stack of whole tortillas.
 - It looks like an illustration or 3D render rather than a photograph.
 
 Return only the JSON object described by the schema. "problems" lists each reason in one short sentence; it is empty when "ok" is true.`;

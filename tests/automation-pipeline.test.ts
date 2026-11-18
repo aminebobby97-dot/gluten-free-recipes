@@ -237,6 +237,23 @@ describe("runDailyRecipe: failures never publish", () => {
     ]);
   });
 
+  it("asks for a simpler composition on each retry and tells the checker which plating it asked for", async () => {
+    const { db, data } = automationDb();
+    const ai = fakeProviders({
+      photoOk: [false, false, false],
+      photoProblems: [["Unrealistic tall stack of muffins."], ["Muffins still piled into a tower."], ["Stacked again."]],
+    });
+    await run(db, ai).result;
+    expect(ai.photographer.inputs.map((i) => i.attempt)).toEqual([1, 2, 3]);
+    const platings = ai.photoChecker.inputs.map((i) => (i as { plating?: string }).plating);
+    expect(new Set(platings).size).toBe(3);
+    expect(platings[0]).toMatch(/four to six pieces/);
+    expect(platings[2]).toMatch(/two or three pieces/);
+    // The check stays strict: all three were checked and none was saved.
+    expect(ai.photoChecker.calls()).toBe(3);
+    expect(data.recipes).toHaveLength(0);
+  });
+
   it("stops asking to avoid problems once a photo passes", async () => {
     const { db } = automationDb();
     const ai = fakeProviders({ photoOk: [false, true], photoProblems: [["Distorted pizza cutter."]] });

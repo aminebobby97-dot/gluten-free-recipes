@@ -9,7 +9,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { FALLBACK_PRICE_MODEL, TEXT_MODEL_PRICES, estimateTextCostUsd, textCostUsd, type TokenUsage } from "../cost";
-import { AiCallError, type AiProviders, type AiResult, type AiStep, type GeneratedRecipe, type KeywordIdea, type KeywordIdeaRequest, type Photo, type PhotoVerdict, type RepairInput, type ReviewVerdict, type WriterInput } from "../types";
+import { AiCallError, type AiProviders, type AiResult, type AiStep, type GeneratedRecipe, type KeywordIdea, type KeywordIdeaRequest, type PhotoCheckRequest, type PhotoVerdict, type RepairInput, type ReviewVerdict, type WriterInput } from "../types";
 import {
   KEYWORD_JSON_SCHEMA,
   KEYWORD_PROMPT_VERSION,
@@ -189,14 +189,14 @@ export function createAnthropicProviders(opts: AnthropicProviderOptions = {}): O
     run: (recipe) => ask(REVIEWER_SYSTEM, [text(reviewPrompt(recipe))], REVIEW_JSON_SCHEMA, MAX_TOKENS.reviewer, "high", (json) => reviewSchema.parse(json)),
   };
 
-  const photoChecker: AiStep<{ recipe: GeneratedRecipe; photo: Photo }, PhotoVerdict> = {
-    estimateUsd: ({ recipe }) => estimate(roughTokens(PHOTO_CHECK_SYSTEM + photoCheckPrompt(recipe)) + IMAGE_TOKENS, MAX_TOKENS.photoCheck),
-    run: ({ recipe, photo }) =>
+  const photoChecker: AiStep<PhotoCheckRequest, PhotoVerdict> = {
+    estimateUsd: ({ recipe, plating }) => estimate(roughTokens(PHOTO_CHECK_SYSTEM + photoCheckPrompt(recipe, plating)) + IMAGE_TOKENS, MAX_TOKENS.photoCheck),
+    run: ({ recipe, photo, plating }) =>
       ask(
         PHOTO_CHECK_SYSTEM,
         [
           { type: "image", source: { type: "base64", media_type: photo.mimeType, data: Buffer.from(photo.data).toString("base64") } },
-          text(photoCheckPrompt(recipe)),
+          text(photoCheckPrompt(recipe, plating)),
         ],
         PHOTO_CHECK_JSON_SCHEMA,
         MAX_TOKENS.photoCheck,
@@ -264,10 +264,13 @@ function reviewPrompt(recipe: GeneratedRecipe): string {
   return `Review this recipe.\n\n${JSON.stringify(rest, null, 2)}`;
 }
 
-function photoCheckPrompt(recipe: GeneratedRecipe): string {
+export function photoCheckPrompt(recipe: GeneratedRecipe, plating?: string): string {
   return [
     `Recipe: ${recipe.title}`,
     `The photo should show: ${recipe.image_brief}`,
+    ...(plating
+      ? [`Plating asked for on this photo: ${plating} Judge the arrangement against this plating where it differs from the description above; the dish, its ingredients, colors and texture must still match the recipe.`]
+      : []),
     `Ingredients: ${recipe.ingredients.map((i) => i.name).join(", ")}`,
   ].join("\n");
 }
